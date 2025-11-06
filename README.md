@@ -1,10 +1,12 @@
 # IdentityGuardian
 
-A Python-based multi-agent framework for identity security automation, built on Microsoft Agent Framework (AutoGen).
+A Python-based multi-agent framework for identity security automation, built on the Microsoft Agent Framework (AutoGen).
 
 ## Overview
 
-This framework implements specialized AI agents that handle critical identity security use cases:
+IdentityGuardian ships with specialized AI agents that work together to cover critical identity security use cases.  The framework can run entirely in mock mode (no API keys required) or leverage OpenAI-powered reasoning for richer recommendations.
+
+Key capabilities include:
 
 - **Access Request Management** - Automated access request processing, approval workflows, and provisioning
 - **Access Reviews** - Periodic access certification campaigns with intelligent recommendations
@@ -14,7 +16,7 @@ This framework implements specialized AI agents that handle critical identity se
 
 ## Architecture
 
-The framework uses a multi-agent architecture with specialized agents coordinated by a central orchestrator:
+The framework uses a multi-agent architecture with specialized agents coordinated by a central orchestrator.  When no OpenAI credentials are configured the CLI automatically falls back to a mock coordinator so all workflows remain available.
 
 ```
 ┌─────────────────────────────────────────┐
@@ -35,12 +37,13 @@ The framework uses a multi-agent architecture with specialized agents coordinate
 
 ### Core Capabilities
 
-- **Multi-Agent Orchestration** - Powered by Microsoft Agent Framework with intelligent routing
-- **AI-Powered Decisions** - LLM-based recommendations for access requests and reviews
-- **Mock Integrations** - Simulated identity providers, ITSM, SIEM, and GRC systems
-- **Risk-Based Access** - Automated risk scoring and policy compliance checking
-- **Telemetry & Observability** - OpenTelemetry integration for agent tracking
-- **CLI Interface** - Rich terminal interface for testing workflows
+- **Multi-Agent Orchestration** – Powered by Microsoft Agent Framework with intelligent routing across specialized agents
+- **AI-Powered Decisions** – LLM-based recommendations for access requests, reviews, lifecycle events, and risk assessments
+- **Dual-Mode Operation** – Mock coordinator for deterministic demos plus full OpenAI integrations when an API key is supplied
+- **Mock Integrations** – Simulated identity provider, ITSM, SIEM, and GRC systems for local development
+- **Risk-Based Access** – Automated risk scoring, policy compliance checks, and SoD violation detection
+- **Telemetry Utilities** – OpenTelemetry helpers and built-in agent metrics for tracking activity
+- **CLI Interface** – Rich terminal experience for exploring end-to-end workflows
 
 ### Specialized Agents
 
@@ -60,6 +63,7 @@ The framework uses a multi-agent architecture with specialized agents coordinate
    - Joiner: New hire provisioning
    - Mover: Role change workflows
    - Leaver: Offboarding and deprovisioning
+   - Ticket creation and baseline access provisioning
 
 4. **Monitoring Agent**
    - Detect behavioral anomalies
@@ -72,6 +76,7 @@ The framework uses a multi-agent architecture with specialized agents coordinate
    - Detect SoD violations
    - Generate compliance reports
    - Recommend remediation steps
+   - Log compliance events to the mock GRC provider
 
 ## Installation
 
@@ -105,15 +110,15 @@ python main.py
 The framework supports two operating modes:
 
 **Mock Mode** (No API Key Required)
-- Runs deterministic workflows without external API calls
+- Runs deterministic workflows without external API calls via `MockCoordinator`
 - Perfect for testing, demos, and understanding the framework
-- All core workflows are fully functional
-- Uses simulated data and rule-based decision making
+- All core workflows are fully functional using simulated data
+- Uses rule-based decision making and mock integrations
 
 **AI Mode** (Requires OpenAI API Key)
-- Uses GPT-4 for intelligent recommendations and decisions
+- Uses GPT-4 class models for intelligent recommendations and decisions
 - Provides natural language insights and analysis
-- Adaptive risk scoring and anomaly detection
+- Adaptive risk scoring and anomaly detection across agents
 - Set `OPENAI_API_KEY` in `.env` to enable
 
 ## Configuration
@@ -124,13 +129,23 @@ Edit `.env` file to configure:
 OPENAI_API_KEY=your_openai_api_key_here
 OPENAI_MODEL=gpt-4o
 
+# Optional Azure OpenAI configuration
+AZURE_OPENAI_ENDPOINT=
+AZURE_OPENAI_API_KEY=
+AZURE_OPENAI_DEPLOYMENT=
+
 LOG_LEVEL=INFO
 FRAMEWORK_ENV=development
 
+# Identity and integration providers
 IDENTITY_PROVIDER=mock
 ITSM_PROVIDER=mock
 SIEM_PROVIDER=mock
 GRC_PROVIDER=mock
+
+# Optional Microsoft Entra ID configuration
+AZURE_TENANT_ID=your-tenant-id
+AZURE_SUBSCRIPTION_ID=your-sub-id
 ```
 
 ## Usage
@@ -139,12 +154,13 @@ GRC_PROVIDER=mock
 
 The framework provides an interactive CLI with demo workflows:
 
-1. **Demo Access Request** - Submit and process an access request
-2. **Demo Review Campaign** - Create an access review campaign
-3. **Demo Joiner** - Process new hire onboarding
-4. **Demo Risk Assessment** - Calculate user risk score
-5. **Demo Monitoring** - Analyze user behavior
-6. **Metrics** - View agent activity metrics
+1. **Demo Access Request** – Submit and process an access request
+2. **Demo Review Campaign** – Create an access review campaign
+3. **Demo Joiner** – Process new hire onboarding
+4. **Demo Risk Assessment** – Calculate user risk score
+5. **Demo Monitoring** – Analyze user behavior
+6. **Metrics** – View agent activity metrics and recent events
+7. **Exit** – Quit the CLI
 
 ### Example: Access Request Workflow
 
@@ -171,52 +187,61 @@ print(f"Risk Score: {result['risk_score']}")
 print(f"Risk Level: {result['risk_level']}")
 ```
 
+### Example Scripts
+
+For additional end-to-end scenarios, review and run `examples/example_usage.py`.
+
 ## Project Structure
 
 ```
 identity_guardian/
-├── agents/                    # AI agent implementations
+├── agents/                     # AI agent implementations
 │   ├── access_request_agent.py
 │   ├── access_review_agent.py
 │   ├── lifecycle_agent.py
 │   ├── monitoring_agent.py
 │   ├── risk_agent.py
-│   └── coordinator.py
-├── config/                    # Configuration management
-│   └── settings.py
-├── integrations/              # Mock system integrations
-│   ├── identity_provider.py
-│   ├── itsm.py
-│   ├── siem.py
-│   └── grc.py
-├── models/                    # Data models
-│   └── identity.py
-├── utils/                     # Utilities
-│   └── telemetry.py
-└── cli.py                     # CLI interface
+│   ├── coordinator.py
+│   └── mock_coordinator.py
+├── cli.py                      # Interactive CLI
+├── config/
+│   └── settings.py             # Pydantic settings & Graph helpers
+├── integrations/
+│   ├── identity_provider.py    # Mock & Azure identity provider
+│   ├── itsm.py                 # Mock ITSM adapter
+│   ├── siem.py                 # Mock SIEM adapter
+│   └── grc.py                  # Mock GRC adapter
+├── models/
+│   └── identity.py             # Core Pydantic models
+├── utils/
+│   └── telemetry.py            # Logging & telemetry utilities
+├── examples/
+│   └── example_usage.py        # Scripted agent demos
+└── __init__.py
 ```
 
 ## Next Steps
 
 ### Phase 2 Enhancements
 
-- Real Azure AD/Entra ID integration
+- Harden Azure AD/Entra ID integration for production tenants
 - SCIM 2.0 connector framework
 - Slack/Teams integration for approvals
 - Web dashboard for monitoring
-- PostgreSQL for audit trails
+- PostgreSQL or other persistent audit trail storage
 - ML-based risk scoring models
-- Production SIEM integrations
+- Production SIEM integrations (Splunk, Sentinel, etc.)
 - GRC platform connectors
 - Comprehensive API layer
 
 ## Technology Stack
 
-- **Microsoft Agent Framework** (AutoGen) - Multi-agent orchestration
-- **OpenAI GPT-4** - AI-powered decision making
-- **Pydantic** - Data validation
-- **Rich** - Terminal UI
-- **OpenTelemetry** - Observability
+- **Microsoft Agent Framework (AutoGen)** – Multi-agent orchestration
+- **OpenAI GPT-4 class models** – AI-powered decision making
+- **Pydantic & pydantic-settings** – Configuration and data validation
+- **Rich** – Terminal UI
+- **OpenTelemetry** – Observability helpers
+- **Azure Identity & Microsoft Graph SDK** – Optional Entra ID integration
 
 ## License
 
