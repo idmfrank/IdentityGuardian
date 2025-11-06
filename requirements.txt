@@ -11,3 +11,5 @@ rich==14.2.0
 pyyaml==6.0.3
 typing-extensions==4.15.0
 asyncio==4.0.0
+msgraph-sdk==1.4.0
+azure-identity==1.19.0

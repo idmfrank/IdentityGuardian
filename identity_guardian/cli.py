@@ -14,7 +14,7 @@ from .agents.access_review_agent import AccessReviewAgent
 from .agents.lifecycle_agent import LifecycleAgent
 from .agents.monitoring_agent import MonitoringAgent
 from .agents.risk_agent import RiskAgent
-from .integrations.identity_provider import MockIdentityProvider
+from .integrations.identity_provider import MockIdentityProvider, get_identity_provider
 from .integrations.itsm import MockITSMProvider
 from .integrations.siem import MockSIEMProvider
 from .integrations.grc import MockGRCProvider
@@ -30,7 +30,13 @@ class IdentityGuardianCLI:
         self.settings = get_settings()
         self.logger = setup_logging(self.settings.log_level)
         
-        self.identity_provider = MockIdentityProvider()
+        provider = None
+        try:
+            provider = asyncio.run(get_identity_provider())
+        except Exception as exc:
+            if hasattr(self, "logger"):
+                self.logger.error("Failed to initialize identity provider: %s", exc, exc_info=True)
+        self.identity_provider = provider or MockIdentityProvider()
         self.itsm_provider = MockITSMProvider()
         self.siem_provider = MockSIEMProvider()
         self.grc_provider = MockGRCProvider()
@@ -52,7 +58,10 @@ class IdentityGuardianCLI:
             )
             
             self.access_request_agent = AccessRequestAgent(
-                self.model_client, self.identity_provider, self.itsm_provider, self.grc_provider
+                self.model_client,
+                self.itsm_provider,
+                self.grc_provider,
+                identity_provider=self.identity_provider
             )
             self.access_review_agent = AccessReviewAgent(
                 self.model_client, self.identity_provider, self.grc_provider
