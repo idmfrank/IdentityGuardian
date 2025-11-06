@@ -116,9 +116,34 @@ Provide clear risk assessments with actionable remediation steps."""
                 "severity": "medium"
             })
             risk_score += 0.2
-        
+
+        identity_protection_risk = await self.identity_provider.get_user_risk(user_id)
+        if identity_protection_risk:
+            normalized_level = identity_protection_risk.split(":")[-1].strip().lower()
+            normalized_level = normalized_level.split("(")[0].strip()
+            severity_map = {
+                "critical": "critical",
+                "high": "high",
+                "medium": "medium",
+                "low": "low",
+                "none": "low",
+            }
+            score_adjustments = {
+                "critical": 0.3,
+                "high": 0.25,
+                "medium": 0.15,
+                "low": 0.05,
+            }
+            if normalized_level in score_adjustments:
+                risk_score += score_adjustments[normalized_level]
+            risk_factors.append({
+                "type": "identity_protection",
+                "description": identity_protection_risk,
+                "severity": severity_map.get(normalized_level, "low")
+            })
+
         risk_score = min(risk_score, 1.0)
-        
+
         risk_level = self._determine_risk_level(risk_score)
         
         risk_id = str(uuid.uuid4())

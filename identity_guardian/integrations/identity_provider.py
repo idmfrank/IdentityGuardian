@@ -4,7 +4,7 @@ from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
-from ..config.settings import get_graph_client
+from ..config.settings import RESOURCE_GROUP_MAP, get_graph_client
 from ..models.identity import User, UserStatus
 
 logger = logging.getLogger(__name__)
@@ -29,6 +29,10 @@ class IdentityProvider(ABC):
 
     @abstractmethod
     async def get_user_access(self, user_id: str) -> List[Dict[str, Any]]:
+        pass
+
+    @abstractmethod
+    async def get_user_risk(self, user_id: str) -> str:
         pass
 
     async def get_current_entitlements(self, user_id: str) -> str:
@@ -177,6 +181,9 @@ class MockIdentityProvider(IdentityProvider):
             for assignment in assignments
         ]
         return f"Mock entitlements for {user_id}: " + ", ".join(formatted)
+
+    async def get_user_risk(self, user_id: str) -> str:
+        return "Identity Protection Risk: none (mock)"
 
     async def request_access(
         self,
@@ -401,10 +408,16 @@ class AzureIdentityProvider(IdentityProvider):
             resource,
             justification,
         )
-        success = await self.provision_access(user_id, resource, access_level or "member")
+        normalized_resource = resource.lower().replace(" ", "_")
+        group_id = RESOURCE_GROUP_MAP.get(normalized_resource)
+        if not group_id:
+            self._logger.error("Unknown resource '%s' for access request", resource)
+            return f"Error: Unknown resource '{resource}'"
+
+        success = await self.provision_access(user_id, group_id, access_level or "member")
         if success:
             return (
-                f"Access granted for {user_id} to group {resource}. "
+                f"Access granted for {user_id} to {resource} (group {group_id}). "
                 f"Justification logged: {justification}. PIM activation simulated."
             )
         return "Error: Access request failed."
@@ -418,7 +431,9 @@ class AzureIdentityProvider(IdentityProvider):
             return "Error: Deprovisioning failed."
 
         try:
-            memberships = await client.users.by_user_id(user_id).transitive_member_of.get()
+            request = client.users.by_user_id(user_id).transitive_member_of
+            request.query_parameters_select = "id,displayName,@odata.type"
+            memberships = await request.get()
             for member in getattr(memberships, "value", []):
                 data = self._to_dict(member)
                 if not data:
@@ -443,6 +458,26 @@ class AzureIdentityProvider(IdentityProvider):
             return "Error: Deprovisioning failed."
 
         return f"User {user_id} disabled and memberships removed."
+
+    async def get_user_risk(self, user_id: str) -> str:
+        client = await self._get_client()
+        try:
+            risk = await client.identity_protection.risky_users.by_risky_user_id(user_id).get()
+            if risk is None:
+                return "Identity Protection Risk: none"
+
+            level = getattr(risk, "risk_level", None) or getattr(risk, "riskLevel", None)
+            if not level:
+                risk_dict = self._to_dict(risk)
+                level = risk_dict.get("risk_level") or risk_dict.get("riskLevel")
+
+            level_str = str(level).lower() if level else "none"
+            return f"Identity Protection Risk: {level_str}"
+        except Exception as exc:
+            self._logger.debug(
+                "Identity Protection risk lookup failed for %s: %s", user_id, exc, exc_info=True
+            )
+            return "Identity Protection: Not available"
 
     async def _get_manager_id(self, client, user_object_id: Optional[str]) -> Optional[str]:
         if not user_object_id:
