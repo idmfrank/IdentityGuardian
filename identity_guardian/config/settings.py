@@ -48,6 +48,17 @@ RESOURCE_GROUP_MAP = {
 }
 
 
+PRIVILEGED_RESOURCE_ROLE_MAP = {
+    # Example: Global Administrator role definition for tenant-wide scope
+    "global_admin": {
+        "role_definition_id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+        "directory_scope_id": "/",
+        "duration": "PT2H",
+    },
+    # Extend with additional privileged resources mapped to role definitions.
+}
+
+
 def get_settings() -> Settings:
     global _settings_instance
     if _settings_instance is None:
