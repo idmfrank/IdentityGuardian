@@ -8,6 +8,7 @@ from rich import print as rprint
 from autogen_ext.models.openai import OpenAIChatCompletionClient
 from .config.settings import get_settings
 from .agents.coordinator import CoordinatorAgent
+from .agents.mock_coordinator import MockCoordinator
 from .agents.access_request_agent import AccessRequestAgent
 from .agents.access_review_agent import AccessReviewAgent
 from .agents.lifecycle_agent import LifecycleAgent
@@ -37,6 +38,12 @@ class IdentitySecurityCLI:
         if not self.settings.openai_api_key:
             console.print("[yellow]Warning: OPENAI_API_KEY not set. Using mock mode.[/yellow]")
             self.mock_mode = True
+            self.coordinator = MockCoordinator(
+                self.identity_provider,
+                self.itsm_provider,
+                self.siem_provider,
+                self.grc_provider
+            )
         else:
             self.mock_mode = False
             self.model_client = OpenAIChatCompletionClient(
@@ -83,12 +90,9 @@ class IdentitySecurityCLI:
         table.add_column("Category", style="cyan")
         table.add_column("Operations", style="green")
         
-        if not self.mock_mode:
-            operations = self.coordinator.get_available_operations()
-            for category, ops in operations.items():
-                table.add_row(category, ", ".join(ops))
-        else:
-            table.add_row("Mock Mode", "Limited operations available")
+        operations = self.coordinator.get_available_operations()
+        for category, ops in operations.items():
+            table.add_row(category, ", ".join(ops))
         
         console.print(table)
         console.print("\n[bold]Commands:[/bold]")
@@ -235,30 +239,15 @@ class IdentitySecurityCLI:
             
             try:
                 if choice == "1":
-                    if self.mock_mode:
-                        console.print("[red]This feature requires OPENAI_API_KEY[/red]")
-                    else:
-                        await self.demo_access_request()
+                    await self.demo_access_request()
                 elif choice == "2":
-                    if self.mock_mode:
-                        console.print("[red]This feature requires OPENAI_API_KEY[/red]")
-                    else:
-                        await self.demo_review_campaign()
+                    await self.demo_review_campaign()
                 elif choice == "3":
-                    if self.mock_mode:
-                        console.print("[red]This feature requires OPENAI_API_KEY[/red]")
-                    else:
-                        await self.demo_joiner()
+                    await self.demo_joiner()
                 elif choice == "4":
-                    if self.mock_mode:
-                        console.print("[red]This feature requires OPENAI_API_KEY[/red]")
-                    else:
-                        await self.demo_risk_assessment()
+                    await self.demo_risk_assessment()
                 elif choice == "5":
-                    if self.mock_mode:
-                        console.print("[red]This feature requires OPENAI_API_KEY[/red]")
-                    else:
-                        await self.demo_monitoring()
+                    await self.demo_monitoring()
                 elif choice == "6":
                     self.show_metrics()
                 elif choice == "7" or choice.lower() == "exit":

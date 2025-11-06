@@ -78,7 +78,7 @@ The framework uses a multi-agent architecture with specialized agents coordinate
 ### Prerequisites
 
 - Python 3.11+
-- OpenAI API key (for AI features)
+- OpenAI API key (optional - for AI-powered features)
 
 ### Setup
 
@@ -89,16 +89,32 @@ The framework uses a multi-agent architecture with specialized agents coordinate
 pip install -r requirements.txt
 ```
 
-3. Configure environment variables:
+3. Configure environment variables (optional):
 ```bash
 cp .env.example .env
-# Edit .env and add your OPENAI_API_KEY
+# Edit .env and add your OPENAI_API_KEY for AI features
 ```
 
 4. Run the CLI:
 ```bash
 python main.py
 ```
+
+### Mock Mode vs AI Mode
+
+The framework supports two operating modes:
+
+**Mock Mode** (No API Key Required)
+- Runs deterministic workflows without external API calls
+- Perfect for testing, demos, and understanding the framework
+- All core workflows are fully functional
+- Uses simulated data and rule-based decision making
+
+**AI Mode** (Requires OpenAI API Key)
+- Uses GPT-4 for intelligent recommendations and decisions
+- Provides natural language insights and analysis
+- Adaptive risk scoring and anomaly detection
+- Set `OPENAI_API_KEY` in `.env` to enable
 
 ## Configuration
 
