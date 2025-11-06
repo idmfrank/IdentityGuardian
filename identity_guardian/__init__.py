@@ -1,5 +1,5 @@
 """
-Identity Security AI Agent Framework
+IdentityGuardian - AI Agent Framework for Identity Security
 Built on Microsoft Agent Framework (AutoGen)
 
 A multi-agent system for identity security automation including:
@@ -11,4 +11,4 @@ A multi-agent system for identity security automation including:
 """
 
 __version__ = "0.1.0"
-__author__ = "Identity Security Team"
+__author__ = "IdentityGuardian Team"

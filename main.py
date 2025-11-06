@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 """
-Identity Security AI Agent Framework
+IdentityGuardian - AI Agent Framework for Identity Security
 Main entry point for the CLI application
 """
 
-from identity_security_framework.cli import main
+from identity_guardian.cli import main
 
 if __name__ == "__main__":
     main()

@@ -7,7 +7,7 @@ from opentelemetry.sdk.trace.export import ConsoleSpanExporter, BatchSpanProcess
 from opentelemetry.sdk.resources import Resource
 
 
-def setup_telemetry(service_name: str = "identity-security-framework"):
+def setup_telemetry(service_name: str = "identity-guardian"):
     resource = Resource(attributes={
         "service.name": service_name
     })

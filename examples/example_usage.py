@@ -1,23 +1,23 @@
 #!/usr/bin/env python3
 """
-Example usage of the Identity Security Framework
+Example usage of the IdentityGuardian
 Demonstrates various agent capabilities
 """
 
 import asyncio
 from datetime import datetime
-from identity_security_framework.config.settings import get_settings
-from identity_security_framework.agents.coordinator import CoordinatorAgent
-from identity_security_framework.agents.access_request_agent import AccessRequestAgent
-from identity_security_framework.agents.access_review_agent import AccessReviewAgent
-from identity_security_framework.agents.lifecycle_agent import LifecycleAgent
-from identity_security_framework.agents.monitoring_agent import MonitoringAgent
-from identity_security_framework.agents.risk_agent import RiskAgent
-from identity_security_framework.integrations.identity_provider import MockIdentityProvider
-from identity_security_framework.integrations.itsm import MockITSMProvider
-from identity_security_framework.integrations.siem import MockSIEMProvider
-from identity_security_framework.integrations.grc import MockGRCProvider
-from identity_security_framework.models.identity import User, UserStatus
+from identity_guardian.config.settings import get_settings
+from identity_guardian.agents.coordinator import CoordinatorAgent
+from identity_guardian.agents.access_request_agent import AccessRequestAgent
+from identity_guardian.agents.access_review_agent import AccessReviewAgent
+from identity_guardian.agents.lifecycle_agent import LifecycleAgent
+from identity_guardian.agents.monitoring_agent import MonitoringAgent
+from identity_guardian.agents.risk_agent import RiskAgent
+from identity_guardian.integrations.identity_provider import MockIdentityProvider
+from identity_guardian.integrations.itsm import MockITSMProvider
+from identity_guardian.integrations.siem import MockSIEMProvider
+from identity_guardian.integrations.grc import MockGRCProvider
+from identity_guardian.models.identity import User, UserStatus
 from autogen_ext.models.openai import OpenAIChatCompletionClient
 
 
@@ -197,7 +197,7 @@ async def example_monitoring():
 
 async def main():
     """Run all examples"""
-    print("Identity Security Framework - Example Usage")
+    print("IdentityGuardian - Example Usage")
     print("=" * 50)
     
     try:

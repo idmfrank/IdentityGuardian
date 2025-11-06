@@ -1,4 +1,4 @@
-# Identity Security AI Agent Framework
+# IdentityGuardian
 
 ## Project Overview
 
@@ -24,7 +24,7 @@ A Python-based multi-agent framework for identity security automation using Micr
 ## Project Structure
 
 ```
-identity_security_framework/
+identity_guardian/
 ├── agents/           - AI agent implementations
 ├── config/           - Configuration and settings
 ├── integrations/     - Mock system integrations (IdP, ITSM, SIEM, GRC)

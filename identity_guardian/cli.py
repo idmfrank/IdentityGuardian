@@ -25,7 +25,7 @@ from .utils.telemetry import setup_logging, agent_metrics
 console = Console()
 
 
-class IdentitySecurityCLI:
+class IdentityGuardianCLI:
     def __init__(self):
         self.settings = get_settings()
         self.logger = setup_logging(self.settings.log_level)
@@ -79,8 +79,9 @@ class IdentitySecurityCLI:
     def display_banner(self):
         banner = """
 ╔══════════════════════════════════════════════════════════════╗
-║   Identity Security AI Agent Framework                       ║
-║   Powered by Microsoft Agent Framework                       ║
+║              🛡️  IdentityGuardian  🛡️                        ║
+║   AI-Powered Identity Security Automation                    ║
+║   Built on Microsoft Agent Framework                         ║
 ╚══════════════════════════════════════════════════════════════╝
         """
         console.print(Panel(banner, style="bold cyan"))
@@ -251,7 +252,7 @@ class IdentitySecurityCLI:
                 elif choice == "6":
                     self.show_metrics()
                 elif choice == "7" or choice.lower() == "exit":
-                    console.print("\n[cyan]Thank you for using Identity Security Framework![/cyan]")
+                    console.print("\n[cyan]Thank you for using IdentityGuardian![/cyan]")
                     break
                 else:
                     console.print("[red]Invalid choice. Please try again.[/red]")
@@ -264,7 +265,7 @@ class IdentitySecurityCLI:
 
 
 def main():
-    cli = IdentitySecurityCLI()
+    cli = IdentityGuardianCLI()
     asyncio.run(cli.run())
 
 

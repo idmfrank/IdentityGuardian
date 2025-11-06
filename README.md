@@ -1,4 +1,4 @@
-# Identity Security AI Agent Framework
+# IdentityGuardian
 
 A Python-based multi-agent framework for identity security automation, built on Microsoft Agent Framework (AutoGen).
 
@@ -149,7 +149,7 @@ The framework provides an interactive CLI with demo workflows:
 ### Example: Access Request Workflow
 
 ```python
-from identity_security_framework.agents.coordinator import CoordinatorAgent
+from identity_guardian.agents.coordinator import CoordinatorAgent
 
 result = await coordinator.process_request("access_request", {
     "user_id": "user001",
@@ -174,7 +174,7 @@ print(f"Risk Level: {result['risk_level']}")
 ## Project Structure
 
 ```
-identity_security_framework/
+identity_guardian/
 ├── agents/                    # AI agent implementations
 │   ├── access_request_agent.py
 │   ├── access_review_agent.py

@@ -1,4 +1,4 @@
-# Identity Security AI Agent Framework - Feature Summary
+# IdentityGuardian - Feature Summary
 
 ## Completed MVP Features
 

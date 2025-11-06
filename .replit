@@ -16,10 +16,10 @@ author = "agent"
 
 [[workflows.workflow.tasks]]
 task = "workflow.run"
-args = "identity-security-cli"
+args = "identity-guardian-cli"
 
 [[workflows.workflow]]
-name = "identity-security-cli"
+name = "identity-guardian-cli"
 author = "agent"
 
 [[workflows.workflow.tasks]]
