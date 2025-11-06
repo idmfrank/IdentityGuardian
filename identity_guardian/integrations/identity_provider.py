@@ -1,10 +1,16 @@
 import logging
 import os
 from abc import ABC, abstractmethod
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
-from ..config.settings import RESOURCE_GROUP_MAP, get_graph_client
+from msgraph.core import APIVersion
+
+from ..config.settings import (
+    PRIVILEGED_RESOURCE_ROLE_MAP,
+    RESOURCE_GROUP_MAP,
+    get_graph_client,
+)
 from ..models.identity import User, UserStatus
 
 logger = logging.getLogger(__name__)
@@ -408,7 +414,62 @@ class AzureIdentityProvider(IdentityProvider):
             resource,
             justification,
         )
+        client = await self._get_client()
         normalized_resource = resource.lower().replace(" ", "_")
+        privileged_role = PRIVILEGED_RESOURCE_ROLE_MAP.get(normalized_resource)
+        if privileged_role:
+            role_definition_id = privileged_role.get("role_definition_id")
+            directory_scope_id = privileged_role.get("directory_scope_id", "/")
+            duration = privileged_role.get("duration", "PT2H")
+            if not role_definition_id:
+                self._logger.error(
+                    "Privileged resource '%s' missing role_definition_id configuration",
+                    resource,
+                )
+                return (
+                    f"Error: Privileged resource '{resource}' is not fully configured for PIM access."
+                )
+
+            start_time = (
+                datetime.now(timezone.utc)
+                .replace(microsecond=0)
+                .isoformat()
+                .replace("+00:00", "Z")
+            )
+
+            body = {
+                "principalId": user_id,
+                "roleDefinitionId": role_definition_id,
+                "directoryScopeId": directory_scope_id,
+                "justification": justification,
+                "scheduleInfo": {
+                    "startDateTime": start_time,
+                    "expiration": {
+                        "type": "afterDuration",
+                        "duration": duration,
+                    },
+                },
+            }
+
+            try:
+                await client.identity_governance.privileged_access.role_assignment_requests.post(
+                    body,
+                    api_version=APIVersion.BETA,
+                )
+                return (
+                    f"Privileged access request submitted for {user_id} to {resource}. "
+                    "Justification recorded and pending PIM approval."
+                )
+            except Exception as exc:
+                self._logger.error(
+                    "Error submitting privileged access request for %s to %s: %s",
+                    user_id,
+                    resource,
+                    exc,
+                    exc_info=True,
+                )
+                return "Error: Privileged access request failed."
+
         group_id = RESOURCE_GROUP_MAP.get(normalized_resource)
         if not group_id:
             self._logger.error("Unknown resource '%s' for access request", resource)
@@ -418,7 +479,7 @@ class AzureIdentityProvider(IdentityProvider):
         if success:
             return (
                 f"Access granted for {user_id} to {resource} (group {group_id}). "
-                f"Justification logged: {justification}. PIM activation simulated."
+                f"Justification logged: {justification}."
             )
         return "Error: Access request failed."
 
