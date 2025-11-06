@@ -1,11 +1,11 @@
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from datetime import datetime
 import uuid
 from autogen_agentchat.agents import AssistantAgent
 from autogen_agentchat.messages import TextMessage
 from autogen_ext.models.openai import OpenAIChatCompletionClient
 from ..models.identity import AccessRequest, AccessRequestStatus
-from ..integrations.identity_provider import IdentityProvider
+from ..integrations.identity_provider import IdentityProvider, get_identity_provider
 from ..integrations.itsm import ITSMProvider
 from ..integrations.grc import GRCProvider
 from ..utils.telemetry import agent_metrics
@@ -15,13 +15,13 @@ class AccessRequestAgent:
     def __init__(
         self,
         model_client: OpenAIChatCompletionClient,
-        identity_provider: IdentityProvider,
         itsm_provider: ITSMProvider,
-        grc_provider: GRCProvider
+        grc_provider: GRCProvider,
+        identity_provider: Optional[IdentityProvider] = None
     ):
-        self.identity_provider = identity_provider
         self.itsm_provider = itsm_provider
         self.grc_provider = grc_provider
+        self.identity_provider = identity_provider
         self.pending_requests = {}
         
         system_message = """You are an Access Request Agent specialized in identity security.
@@ -64,12 +64,15 @@ Always provide clear, actionable recommendations."""
             "resource_id": resource_id
         })
         
-        user = await self.identity_provider.get_user(user_id)
+        provider = await self._ensure_identity_provider()
+        user = await provider.get_user(user_id)
         if not user:
             return {
                 "status": "rejected",
                 "reason": "User not found or inactive"
             }
+
+        entitlements_summary = await provider.get_current_entitlements(user_id)
         
         compliance_check = await self.grc_provider.check_policy_compliance(
             user_id, resource_id, access_level
@@ -121,7 +124,8 @@ Always provide clear, actionable recommendations."""
             "policy_violations": access_request.policy_violations,
             "approvers": approvers,
             "ticket_id": ticket_id,
-            "recommendation": recommendation
+            "recommendation": recommendation,
+            "entitlements": entitlements_summary
         }
     
     def _calculate_risk_score(
@@ -195,12 +199,16 @@ Provide a brief recommendation (approve/reject/conditional) with reasoning."""
         request.status = AccessRequestStatus.APPROVED
         request.approved_by = approver_id
         request.approved_at = datetime.now()
-        
-        provisioned = await self.identity_provider.provision_access(
+
+        provider = await self._ensure_identity_provider()
+        access_response = await provider.request_access(
             request.user_id,
             request.resource_id,
+            request.business_justification,
             request.access_level
         )
+
+        provisioned = not access_response.lower().startswith("error")
         
         if provisioned:
             request.status = AccessRequestStatus.PROVISIONED
@@ -215,5 +223,11 @@ Provide a brief recommendation (approve/reject/conditional) with reasoning."""
             "success": True,
             "request_id": request_id,
             "status": request.status.value,
-            "provisioned": provisioned
+            "provisioned": provisioned,
+            "provisioning_message": access_response
         }
+
+    async def _ensure_identity_provider(self) -> IdentityProvider:
+        if self.identity_provider is None:
+            self.identity_provider = await get_identity_provider()
+        return self.identity_provider

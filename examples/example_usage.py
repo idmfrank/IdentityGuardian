@@ -39,7 +39,12 @@ async def example_access_request():
     itsm_provider = MockITSMProvider()
     grc_provider = MockGRCProvider()
     
-    agent = AccessRequestAgent(model_client, identity_provider, itsm_provider, grc_provider)
+    agent = AccessRequestAgent(
+        model_client,
+        itsm_provider,
+        grc_provider,
+        identity_provider=identity_provider
+    )
     
     result = await agent.process_request(
         user_id="user001",
