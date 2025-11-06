@@ -41,6 +41,13 @@ _graph_credential: Optional[Union[AzureCliCredential, ManagedIdentityCredential]
 logger = logging.getLogger(__name__)
 
 
+RESOURCE_GROUP_MAP = {
+    "financial_db": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",  # Finance DB group
+    "snowflake_prod": "yyyyyyyy-yyyy-yyyy-yyyy-yyyyyyyyyyyy",
+    # Add more resource to group mappings as needed.
+}
+
+
 def get_settings() -> Settings:
     global _settings_instance
     if _settings_instance is None:
