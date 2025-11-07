@@ -164,6 +164,26 @@ AZURE_TENANT_ID=your-tenant-id
 AZURE_SUBSCRIPTION_ID=your-sub-id
 ```
 
+### SCIM 2.0 Integration
+
+IdentityGuardian provides both outbound (source) and inbound (target) SCIM 2.0 support for joiner/mover/leaver automation.
+
+1. **Configure environment variables** – update `.env` with the SCIM bearer token, base URL for your target, and inbound server host/port values. Sample entries are included in `.env.example`.
+2. **Run the inbound server (optional)** – expose `/scim/v2/Users` and `/scim/v2/Groups` endpoints via:
+
+   ```bash
+   python -c "from identity_guardian.integrations.scim import get_scim_inbound; get_scim_inbound().run()"
+   ```
+
+   Pair this with a tunneling service such as `ngrok http 8080` when testing with SaaS identity sources like Entra ID or SailPoint.
+3. **Trigger outbound provisioning** – once configured, lifecycle flows automatically push SCIM changes. You can also run the demo script:
+
+   ```bash
+   python examples/scim_demo.py
+   ```
+
+   The script exercises joiner, mover, and leaver operations via the outbound client and prints the SCIM responses.
+
 ### Conditional Access Auto-Block
 
 IdentityGuardian prefers Conditional Access (CA) enforcement to hard disabling an account. Cloning a pre-approved CA template keeps sign-in, multi-factor authentication, and device policies intact while blocking all access paths for the targeted identity. It also leaves the account enabled so that password resets and self-service remediation continue to work during an investigation.

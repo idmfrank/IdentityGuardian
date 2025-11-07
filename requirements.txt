@@ -16,3 +16,5 @@ azure-identity==1.19.0
 aiohttp==3.9.5
 python-multipart==0.0.9
 azure-monitor-query==1.3.0
+scim2-client==2.0.0
+scim2-models==2.0.0

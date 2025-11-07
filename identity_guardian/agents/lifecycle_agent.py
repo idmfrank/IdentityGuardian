@@ -1,4 +1,5 @@
-from typing import Dict, Any, List
+import logging
+from typing import Dict, Any, List, Optional
 from datetime import datetime
 import uuid
 from autogen_agentchat.agents import AssistantAgent
@@ -7,7 +8,11 @@ from autogen_ext.models.openai import OpenAIChatCompletionClient
 from ..models.identity import LifecycleEvent, LifecycleEventType, User, UserStatus
 from ..integrations.identity_provider import IdentityProvider
 from ..integrations.itsm import ITSMProvider
+from ..integrations.scim import SCIMOutboundClient, get_scim_outbound
 from ..utils.telemetry import agent_metrics
+
+
+logger = logging.getLogger(__name__)
 
 
 class LifecycleAgent:
@@ -20,6 +25,7 @@ class LifecycleAgent:
         self.identity_provider = identity_provider
         self.itsm_provider = itsm_provider
         self.lifecycle_events = {}
+        self.scim_outbound: Optional[SCIMOutboundClient] = None
         
         system_message = """You are an Identity Lifecycle Management Agent.
 
@@ -56,6 +62,11 @@ Always prioritize security and compliance in lifecycle operations."""
             system_message=system_message,
             description="Manages identity lifecycle for joiners, movers, and leavers"
         )
+
+        try:
+            self.scim_outbound = get_scim_outbound()
+        except ValueError as exc:
+            logger.info("SCIM outbound client disabled: %s", exc)
     
     async def process_joiner(
         self,
@@ -96,6 +107,8 @@ Always prioritize security and compliance in lifecycle operations."""
         for task in provisioning_tasks:
             if "baseline" in task.lower():
                 await self._provision_baseline_access(user)
+
+        scim_status = await self._sync_scim_joiner(user)
         
         event.status = "completed"
         event.completed_at = datetime.now()
@@ -105,7 +118,7 @@ Always prioritize security and compliance in lifecycle operations."""
             "tasks_count": len(provisioning_tasks)
         })
         
-        return {
+        result = {
             "event_id": event_id,
             "event_type": "joiner",
             "user_id": user.user_id,
@@ -113,6 +126,11 @@ Always prioritize security and compliance in lifecycle operations."""
             "provisioning_tasks": provisioning_tasks,
             "ticket_id": ticket_id
         }
+
+        if scim_status:
+            result["scim_status"] = scim_status
+
+        return result
     
     async def process_mover(
         self,
@@ -172,7 +190,9 @@ Always prioritize security and compliance in lifecycle operations."""
             priority="Medium"
         )
         
-        return {
+        scim_status = await self._sync_scim_mover(user)
+
+        result = {
             "event_id": event_id,
             "event_type": "mover",
             "user_id": user_id,
@@ -181,6 +201,11 @@ Always prioritize security and compliance in lifecycle operations."""
             "deprovisioning_tasks": deprovisioning_tasks,
             "ticket_id": ticket_id
         }
+
+        if scim_status:
+            result["scim_status"] = scim_status
+
+        return result
     
     async def process_leaver(
         self,
@@ -238,7 +263,9 @@ Always prioritize security and compliance in lifecycle operations."""
             "access_revoked": len(user_access)
         })
         
-        return {
+        scim_status = await self._sync_scim_leaver(user)
+
+        result = {
             "event_id": event_id,
             "event_type": "leaver",
             "user_id": user_id,
@@ -247,6 +274,11 @@ Always prioritize security and compliance in lifecycle operations."""
             "access_revoked_count": len(user_access),
             "ticket_id": ticket_id
         }
+
+        if scim_status:
+            result["scim_status"] = scim_status
+
+        return result
     
     async def _generate_joiner_tasks(self, user: User) -> List[str]:
         tasks = [
@@ -278,10 +310,52 @@ Always prioritize security and compliance in lifecycle operations."""
             f"collaboration_tools",
             f"{user.department.lower()}_shared_drive"
         ]
-        
+
         for resource in baseline_resources:
             await self.identity_provider.provision_access(
                 user.user_id,
                 resource,
                 "read"
             )
+
+    async def _sync_scim_joiner(self, user: User) -> Optional[str]:
+        if not self.scim_outbound:
+            return None
+
+        payload = self._build_scim_payload(user, active=True)
+        try:
+            return await self.scim_outbound.provision_user(payload)
+        except Exception as exc:  # pragma: no cover - network failure paths
+            logger.error("SCIM joiner provisioning failed: %s", exc)
+            return None
+
+    async def _sync_scim_mover(self, user: User) -> Optional[str]:
+        if not self.scim_outbound:
+            return None
+
+        payload = self._build_scim_payload(user, active=True)
+        try:
+            return await self.scim_outbound.update_user(payload["userPrincipalName"], payload)
+        except Exception as exc:  # pragma: no cover - network failure paths
+            logger.error("SCIM mover update failed: %s", exc)
+            return None
+
+    async def _sync_scim_leaver(self, user: User) -> Optional[str]:
+        if not self.scim_outbound:
+            return None
+
+        user_identifier = user.email or user.user_id
+        try:
+            return await self.scim_outbound.deprovision_user(user_identifier)
+        except Exception as exc:  # pragma: no cover - network failure paths
+            logger.error("SCIM leaver deprovision failed: %s", exc)
+            return None
+
+    def _build_scim_payload(self, user: User, active: bool) -> Dict[str, Any]:
+        email = user.email or f"{user.username}@example.com"
+        return {
+            "userPrincipalName": email,
+            "givenName": user.first_name or user.username,
+            "surname": user.last_name or "",
+            "active": active,
+        }
