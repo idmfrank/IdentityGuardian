@@ -49,9 +49,9 @@ RESOURCE_GROUP_MAP = {
 
 
 PRIVILEGED_RESOURCE_ROLE_MAP = {
-    # Example: Global Administrator role definition for tenant-wide scope
+    # Microsoft Entra Global Administrator role definition for tenant-wide scope
     "global_admin": {
-        "role_definition_id": "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+        "role_definition_id": "62e90394-69f5-4237-9190-012177145e10",
         "directory_scope_id": "/",
         "duration": "PT2H",
     },

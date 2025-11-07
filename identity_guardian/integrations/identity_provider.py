@@ -2,7 +2,7 @@ import logging
 import os
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Union
 
 from msgraph.core import APIVersion
 
@@ -60,10 +60,11 @@ class IdentityProvider(ABC):
         user_id: str,
         resource: str,
         justification: str,
-        access_level: Optional[str] = None,
+        access_level: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> str:
         """Submit an access request and return a status message."""
-        success = await self.provision_access(user_id, resource, access_level or "member")
+        membership_level = access_level if isinstance(access_level, str) else "member"
+        success = await self.provision_access(user_id, resource, membership_level or "member")
         if success:
             return (
                 f"Access request submitted for {user_id} to {resource}. "
@@ -196,9 +197,10 @@ class MockIdentityProvider(IdentityProvider):
         user_id: str,
         resource: str,
         justification: str,
-        access_level: Optional[str] = None,
+        access_level: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> str:
-        success = await self.provision_access(user_id, resource, access_level or "member")
+        membership_level = access_level if isinstance(access_level, str) else "member"
+        success = await self.provision_access(user_id, resource, membership_level or "member")
         if success:
             assignments = self.access_assignments.get(user_id, [])
             if assignments:
@@ -221,6 +223,73 @@ class MockIdentityProvider(IdentityProvider):
 class AzureIdentityProvider(IdentityProvider):
     def __init__(self) -> None:
         self._logger = logging.getLogger(f"{__name__}.AzureIdentityProvider")
+
+    def _format_datetime_for_graph(self, value: Union[str, datetime]) -> str:
+        """Return an ISO 8601 UTC timestamp suitable for Graph requests."""
+        if isinstance(value, datetime):
+            if value.tzinfo is None:
+                value = value.replace(tzinfo=timezone.utc)
+            else:
+                value = value.astimezone(timezone.utc)
+            normalized = value.replace(microsecond=0)
+        elif isinstance(value, str):
+            candidate = value.strip()
+            if not candidate:
+                raise ValueError("startDateTime cannot be empty")
+            if candidate.endswith("Z"):
+                candidate = candidate[:-1] + "+00:00"
+            try:
+                parsed = datetime.fromisoformat(candidate)
+            except ValueError as exc:
+                raise ValueError("Invalid ISO 8601 date string for startDateTime") from exc
+            normalized = parsed.astimezone(timezone.utc).replace(microsecond=0)
+        else:
+            raise ValueError("startDateTime must be a datetime or ISO 8601 string")
+
+        return normalized.isoformat().replace("+00:00", "Z")
+
+    def _build_privileged_role_request_body(
+        self,
+        user_id: str,
+        justification: str,
+        role_config: Dict[str, Any],
+        schedule_overrides: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        role_definition_id = role_config.get("role_definition_id")
+        if not role_definition_id:
+            raise ValueError("Privileged role configuration is missing 'role_definition_id'")
+
+        directory_scope_id = role_config.get("directory_scope_id", "/")
+        base_schedule = role_config.get("schedule_info", {})
+        schedule_overrides = schedule_overrides or {}
+
+        schedule_info: Dict[str, Any] = {**base_schedule, **schedule_overrides}
+
+        start_value: Union[str, datetime]
+        if "startDateTime" in schedule_info:
+            start_value = schedule_info["startDateTime"]
+        else:
+            start_value = datetime.now(timezone.utc).replace(microsecond=0)
+
+        start_time = self._format_datetime_for_graph(start_value)
+
+        expiration = schedule_info.get("expiration")
+        if not isinstance(expiration, dict):
+            duration = role_config.get("duration", "PT2H")
+            expiration = {"type": "afterDuration", "duration": duration}
+
+        schedule_payload = {
+            "startDateTime": start_time,
+            "expiration": expiration,
+        }
+
+        return {
+            "principalId": user_id,
+            "roleDefinitionId": role_definition_id,
+            "directoryScopeId": directory_scope_id,
+            "justification": justification,
+            "scheduleInfo": schedule_payload,
+        }
 
     async def _get_client(self):
         client = await get_graph_client()
@@ -406,7 +475,7 @@ class AzureIdentityProvider(IdentityProvider):
         user_id: str,
         resource: str,
         justification: str,
-        access_level: Optional[str] = None,
+        access_level: Optional[Union[str, Dict[str, Any]]] = None,
     ) -> str:
         self._logger.info(
             "Submitting access request for user %s to resource %s with justification '%s'",
@@ -418,38 +487,26 @@ class AzureIdentityProvider(IdentityProvider):
         normalized_resource = resource.lower().replace(" ", "_")
         privileged_role = PRIVILEGED_RESOURCE_ROLE_MAP.get(normalized_resource)
         if privileged_role:
-            role_definition_id = privileged_role.get("role_definition_id")
-            directory_scope_id = privileged_role.get("directory_scope_id", "/")
-            duration = privileged_role.get("duration", "PT2H")
-            if not role_definition_id:
+            schedule_overrides = None
+            if isinstance(access_level, dict):
+                # Allow callers to pass schedule overrides as part of the access_level payload.
+                schedule_overrides = access_level.get("schedule") if "schedule" in access_level else access_level
+
+            try:
+                body = self._build_privileged_role_request_body(
+                    user_id,
+                    justification,
+                    privileged_role,
+                    schedule_overrides=schedule_overrides,
+                )
+            except ValueError as exc:
                 self._logger.error(
-                    "Privileged resource '%s' missing role_definition_id configuration",
+                    "Invalid privileged access configuration for resource %s: %s",
                     resource,
+                    exc,
+                    exc_info=True,
                 )
-                return (
-                    f"Error: Privileged resource '{resource}' is not fully configured for PIM access."
-                )
-
-            start_time = (
-                datetime.now(timezone.utc)
-                .replace(microsecond=0)
-                .isoformat()
-                .replace("+00:00", "Z")
-            )
-
-            body = {
-                "principalId": user_id,
-                "roleDefinitionId": role_definition_id,
-                "directoryScopeId": directory_scope_id,
-                "justification": justification,
-                "scheduleInfo": {
-                    "startDateTime": start_time,
-                    "expiration": {
-                        "type": "afterDuration",
-                        "duration": duration,
-                    },
-                },
-            }
+                return f"Error: {exc}"
 
             try:
                 await client.identity_governance.privileged_access.role_assignment_requests.post(
@@ -468,7 +525,10 @@ class AzureIdentityProvider(IdentityProvider):
                     exc,
                     exc_info=True,
                 )
-                return "Error: Privileged access request failed."
+                return (
+                    "Error: Privileged access request failed. Ensure the application has "
+                    "PrivilegedAccess.ReadWrite.AzureAD consent and the request configuration is valid."
+                )
 
         group_id = RESOURCE_GROUP_MAP.get(normalized_resource)
         if not group_id:

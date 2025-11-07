@@ -148,6 +148,12 @@ AZURE_TENANT_ID=your-tenant-id
 AZURE_SUBSCRIPTION_ID=your-sub-id
 ```
 
+### Privileged Identity Management (PIM) Configuration
+
+IdentityGuardian can submit JIT privileged access requests through Microsoft Graph when `IDENTITY_PROVIDER=azure`. Privileged resources are mapped in `identity_guardian/config/settings.py` via `PRIVILEGED_RESOURCE_ROLE_MAP`. The project ships with a predefined entry for the Microsoft Entra **Global Administrator** role (role definition ID `62e90394-69f5-4237-9190-012177145e10`). Update or extend this mapping with the role definition IDs for the privileged roles you intend to manage.
+
+> **Important:** The application identity used by IdentityGuardian must be granted the `PrivilegedAccess.ReadWrite.AzureAD` permission to create PIM role assignment requests.
+
 ## Usage
 
 ### CLI Commands
