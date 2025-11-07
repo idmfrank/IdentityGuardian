@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, Optional
 
+from functools import wraps
+
 from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ValidationError
@@ -48,8 +50,30 @@ class TeamsWebhookPayload(BaseModel):
         return TeamsAction.model_validate(payload)
 
 
+def _optional_rate_limit(limit: str):
+    """Apply rate limiting when a real FastAPI/Starlette request is provided."""
+
+    def decorator(func):
+        limited = limiter.limit(limit)(func)
+
+        @wraps(func)
+        async def wrapper(*args, **kwargs):
+            request = kwargs.get("request")
+            if request is None and args:
+                request = args[0]
+
+            if isinstance(request, Request):
+                return await limited(*args, **kwargs)
+
+            return await func(*args, **kwargs)
+
+        return wrapper
+
+    return decorator
+
+
 @app.post("/webhook/teams")
-@limiter.limit("10/minute")
+@_optional_rate_limit("10/minute")
 async def teams_webhook(request: Request, csrf_token: str | None = Header(default=None, alias="X-CSRF-Token")):
     if settings.TEAMS_WEBHOOK_SECRET and csrf_token != settings.TEAMS_WEBHOOK_SECRET:
         raise HTTPException(status_code=403, detail="Invalid CSRF token")
