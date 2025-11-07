@@ -8,10 +8,10 @@ IdentityGuardian ships with specialized AI agents that work together to cover cr
 
 Key capabilities include:
 
-- **Access Request Management** - Automated access request processing, approval workflows, and provisioning
+- **Access Request Management** - Automated access request processing, approval workflows, Teams-based approvals, and provisioning
 - **Access Reviews** - Periodic access certification campaigns with intelligent recommendations
 - **Identity Lifecycle Management** - Joiner/mover/leaver workflows with automated provisioning
-- **Identity Monitoring** - Anomaly detection, dormant accounts, and security alerting
+- **Identity Monitoring** - Anomaly detection, Sentinel-driven insights, dormant accounts, and security alerting
 - **Identity Risk Management** - Risk scoring, compliance checking, and SoD violation detection
 
 ## Architecture
@@ -143,6 +143,14 @@ ITSM_PROVIDER=mock
 SIEM_PROVIDER=mock
 GRC_PROVIDER=mock
 
+# Microsoft Teams approval bot (optional)
+BOT_ID=
+BOT_PASSWORD=
+TEAMS_CHANNEL_ID=
+
+# Microsoft Sentinel monitoring (optional)
+SENTINEL_WORKSPACE_ID=
+
 # Optional Microsoft Entra ID configuration
 AZURE_TENANT_ID=your-tenant-id
 AZURE_SUBSCRIPTION_ID=your-sub-id
@@ -193,9 +201,43 @@ print(f"Risk Score: {result['risk_score']}")
 print(f"Risk Level: {result['risk_level']}")
 ```
 
+### Microsoft Teams Approval Bot
+
+IdentityGuardian can automatically post adaptive approval cards to Microsoft Teams and activate Privileged Identity Management (PIM) assignments when approvers click **Approve**. To enable the bot:
+
+1. Register a bot in Azure (App Registrations) using redirect URI `https://token.botframework.com/.auth/web/redirect`.
+2. Grant the bot `ChannelMessage.Send` and `TeamsActivity.Send` application permissions and create a client secret.
+3. Populate `BOT_ID`, `BOT_PASSWORD`, and `TEAMS_CHANNEL_ID` in `.env`.
+4. Start the webhook receiver so Teams can deliver action callbacks:
+
+```bash
+uvicorn webhook:app --reload --port 8000
+```
+
+5. Expose the webhook (for example with `ngrok http 8000`) and set the Bot Framework messaging endpoint accordingly.
+
+Once configured, approving a PIM request from Teams will automatically activate the role assignment.
+
+### Microsoft Sentinel Monitoring
+
+The monitoring agent can run Microsoft Sentinel Kusto queries to incorporate risky sign-ins and privilege escalations into user risk scores. Provide your Sentinel workspace ID in `.env` and sign in with Azure CLI credentials (`az login`) prior to running the CLI. The agent consumes the following data:
+
+- Risky sign-ins over the past 24 hours
+- Privilege escalation audit events over the past 24 hours
+
+The Sentinel results are folded into the overall risk score that the Risk Agent returns.
+
 ### Example Scripts
 
 For additional end-to-end scenarios, review and run `examples/example_usage.py`.
+
+## Testing
+
+Run the unit test suite from the repository root:
+
+```bash
+PYTHONPATH=. pytest
+```
 
 ## Project Structure
 

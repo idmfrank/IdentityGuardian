@@ -22,6 +22,12 @@ class Settings(BaseSettings):
     azure_tenant_id: str = Field(default="", description="Azure tenant ID for Graph access")
     azure_subscription_id: str = Field(default="", description="Azure subscription ID for resource scope")
 
+    BOT_ID: str = Field(default="", description="Microsoft Teams bot application ID")
+    BOT_PASSWORD: str = Field(default="", description="Microsoft Teams bot client secret")
+    TEAMS_CHANNEL_ID: str = Field(default="", description="Teams channel or chat conversation ID")
+
+    SENTINEL_WORKSPACE_ID: str = Field(default="", description="Azure Sentinel Log Analytics workspace ID")
+
     identity_provider: str = Field(default="mock", description="Identity provider (mock, azure)")
     itsm_provider: str = Field(default="mock", description="ITSM provider (mock, servicenow, jira)")
     siem_provider: str = Field(default="mock", description="SIEM provider (mock, splunk, sentinel)")

@@ -11,6 +11,7 @@ from ..config.settings import (
     RESOURCE_GROUP_MAP,
     get_graph_client,
 )
+from ..integrations.teams_bot import TeamsApprovalBot
 from ..models.identity import User, UserStatus
 
 logger = logging.getLogger(__name__)
@@ -509,10 +510,32 @@ class AzureIdentityProvider(IdentityProvider):
                 return f"Error: {exc}"
 
             try:
-                await client.identity_governance.privileged_access.role_assignment_requests.post(
+                response = await client.identity_governance.privileged_access.role_assignment_requests.post(
                     body,
                     api_version=APIVersion.BETA,
                 )
+                request_payload = self._to_dict(response) if response else {}
+                request_id = request_payload.get("id") or request_payload.get("request_id")
+
+                if request_id:
+                    try:
+                        bot = TeamsApprovalBot()
+                        await bot.send_approval_card(user_id, resource, justification, request_id)
+                        return (
+                            f"PIM request {request_id} sent to Teams for approval."
+                        )
+                    except Exception as exc:
+                        self._logger.warning(
+                            "Privileged request %s created but Teams notification failed: %s",
+                            request_id,
+                            exc,
+                            exc_info=True,
+                        )
+                        return (
+                            f"Privileged access request submitted for {user_id} to {resource}. "
+                            "Teams notification failed; approval required in PIM portal."
+                        )
+
                 return (
                     f"Privileged access request submitted for {user_id} to {resource}. "
                     "Justification recorded and pending PIM approval."
