@@ -34,6 +34,180 @@ The framework uses a multi-agent architecture with specialized agents coordinate
 └────────┘        └─────────────┘  └────────────┘  └──────────┘  └──────────┘
 ```
 
+## Web Dashboard
+
+IdentityGuardian also ships with a production-ready web dashboard that exposes the same core identity security workflows over a modern web stack.  The dashboard is split into a FastAPI backend and a React + Vite frontend, styled with Tailwind CSS, wired together with Zustand for state management, and visualized with Recharts.
+
+### Technology Stack
+
+- **Backend API** – FastAPI with Pydantic request models, modular routers, and CORS support for the SPA.
+- **Frontend** – React (TypeScript) running on Vite for instant HMR.
+- **Styling** – Tailwind CSS utility classes for consistent theming.
+- **State** – Lightweight global state via Zustand stores.
+- **Charts** – Recharts components for request trends, risk distribution, and monitoring metrics.
+
+### Project Structure
+
+```
+IdentityGuardian/
+├── backend/                  # FastAPI
+│   ├── main.py
+│   ├── api/
+│   │   ├── access.py
+│   │   ├── lifecycle.py
+│   │   ├── risk.py
+│   │   ├── monitoring.py
+│   │   ├── scim.py
+│   │   └── groups.py
+│   └── models.py
+├── frontend/                 # React + Vite
+│   ├── src/
+│   │   ├── pages/
+│   │   ├── components/
+│   │   └── store/
+│   └── vite.config.ts
+└── docker-compose.yml
+```
+
+### Backend (FastAPI)
+
+`backend/main.py` wires the modular routers and enables the SPA to call the API securely:
+
+```python
+from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
+from api import access, lifecycle, risk, monitoring, scim, groups
+
+app = FastAPI(title="IdentityGuardian Dashboard")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(access.router, prefix="/api/access")
+app.include_router(lifecycle.router, prefix="/api/lifecycle")
+app.include_router(risk.router, prefix="/api/risk")
+app.include_router(monitoring.router, prefix="/api/monitoring")
+app.include_router(scim.router, prefix="/api/scim")
+app.include_router(groups.router, prefix="/api/groups")
+
+
+@app.get("/")
+def root():
+    return {"message": "IdentityGuardian API"}
+```
+
+Routers encapsulate domain logic.  For example, `backend/api/access.py` orchestrates access requests through the AccessRequestAgent:
+
+```python
+from fastapi import APIRouter
+from pydantic import BaseModel
+from agents.access_request_agent import AccessRequestAgent
+
+router = APIRouter()
+agent = AccessRequestAgent()
+
+
+class AccessRequest(BaseModel):
+    user_id: str
+    resource: str
+    justification: str
+
+
+@router.post("/request")
+async def submit_request(req: AccessRequest):
+    result = await agent.handle_request(req.dict())
+    return result
+
+
+@router.get("/requests")
+async def list_requests():
+    return [
+        {"id": "1", "user": "alice@contoso.com", "resource": "Snowflake", "status": "Approved", "risk": 6}
+    ]
+```
+
+### Frontend (React + Vite + Tailwind)
+
+The SPA bootstraps from `frontend/src/main.tsx` and renders the router described in `frontend/src/App.tsx`.  Pages live in `frontend/src/pages` and leverage shared components, Zustand stores, and Tailwind utility classes for consistent styling.
+
+The access request page combines form handling with charts:
+
+```tsx
+const mockHistory = [
+  { date: 'Mon', requests: 12 },
+  { date: 'Tue', requests: 19 },
+  { date: 'Wed', requests: 15 },
+]
+
+export default function AccessRequest() {
+  const { register, handleSubmit, reset } = useForm()
+  const [status, setStatus] = useState<string | null>(null)
+
+  const onSubmit = async (data: any) => {
+    const res = await fetch('http://localhost:8000/api/access/request', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    })
+    const result = await res.json()
+    setStatus(`Request submitted: ${result.pim_result}`)
+    reset()
+  }
+
+  return (
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      {/* Form */}
+      {/* Trend chart rendered via <ResponsiveContainer> */}
+    </div>
+  )
+}
+```
+
+Risk insights are rendered with Recharts pie charts, and lifecycle, monitoring, SCIM, and group management pages expose quick actions for each domain.
+
+### Feature Coverage
+
+| Feature        | URL              | Function                            |
+| -------------- | ---------------- | ----------------------------------- |
+| Access Request | `/access-request` | Submit access requests and track status |
+| Access Reviews | `/reviews`        | Start and certify campaigns        |
+| Lifecycle      | `/lifecycle`      | Joiner, mover, and leaver workflows |
+| Monitoring     | `/monitoring`     | Sentinel alerts and anomaly feeds  |
+| Risk           | `/risk`           | Risk scores and automated blocking |
+| SCIM Logs      | `/scim`           | Inbound/outbound SCIM visibility    |
+| Groups         | `/groups`         | Manage groups and membership        |
+
+### Local Development
+
+Run the dashboard locally with Docker Compose (requires Docker Desktop):
+
+```bash
+docker-compose up --build
+```
+
+- Backend – available at `http://localhost:8000`.
+- Frontend – available at `http://localhost:5173`.
+- Environment variables such as `IDENTITY_PROVIDER=azure` and `AZURE_TENANT_ID` can be set in `.env` and consumed by `docker-compose`.
+
+To develop each service independently:
+
+```bash
+# Backend API
+uvicorn backend.main:app --reload --port 8000
+
+# Frontend SPA
+cd frontend
+npm install
+npm run dev
+```
+
+The frontend proxies API calls to `http://localhost:8000/api/*` so that joiner/mover/leaver lifecycle flows, SCIM operations, access requests, and Sentinel risk monitoring are immediately available once both services are running.
+
 ## Features
 
 ### Core Capabilities

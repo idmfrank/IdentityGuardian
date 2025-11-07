@@ -52,8 +52,17 @@ class _ModelClient:
         return SimpleNamespace(content="")
 
 
-pydantic_module = SimpleNamespace(Field=_Field, BaseModel=_BaseModel)
-pydantic_settings_module = SimpleNamespace(BaseSettings=_BaseSettings)
+try:  # pragma: no cover - prefer real pydantic when installed
+    import pydantic as _real_pydantic  # type: ignore
+except Exception:  # pragma: no cover - fallback stub
+    pydantic_module = SimpleNamespace(Field=_Field, BaseModel=_BaseModel)
+    sys.modules.setdefault("pydantic", pydantic_module)
+
+try:  # pragma: no cover - prefer real pydantic-settings when installed
+    import pydantic_settings as _real_pydantic_settings  # type: ignore
+except Exception:  # pragma: no cover - fallback stub
+    pydantic_settings_module = SimpleNamespace(BaseSettings=_BaseSettings)
+    sys.modules.setdefault("pydantic_settings", pydantic_settings_module)
 
 autogen_agents = SimpleNamespace(AssistantAgent=_AssistantAgent)
 autogen_messages = SimpleNamespace(TextMessage=_TextMessage)
@@ -62,9 +71,6 @@ autogen_module = SimpleNamespace(agents=autogen_agents, messages=autogen_message
 openai_module = SimpleNamespace(OpenAIChatCompletionClient=_ModelClient)
 autogen_ext_models = SimpleNamespace(openai=openai_module)
 autogen_ext_module = SimpleNamespace(models=autogen_ext_models)
-
-sys.modules.setdefault("pydantic", pydantic_module)
-sys.modules.setdefault("pydantic_settings", pydantic_settings_module)
 sys.modules.setdefault("autogen_agentchat", autogen_module)
 sys.modules.setdefault("autogen_agentchat.agents", autogen_agents)
 sys.modules.setdefault("autogen_agentchat.messages", autogen_messages)
@@ -113,61 +119,84 @@ sys.modules.setdefault("opentelemetry.sdk.trace.export", export_module)
 sys.modules.setdefault("opentelemetry.sdk.resources", resources_module)
 
 
-class _FastAPI:
-    def __init__(self, *args, **_kwargs):
-        self.routes = []
+try:  # pragma: no cover - prefer real FastAPI when installed
+    import fastapi as _fastapi  # type: ignore
+    import fastapi.security as _fastapi_security  # type: ignore
+except Exception:  # pragma: no cover - fallback stub for unit tests
+    class _BaseRouter:
+        def __init__(self):
+            self.routes = []
 
-    def _register(self, func):
-        self.routes.append(func)
-        return func
+        def _register(self, func):
+            self.routes.append(func)
+            return func
 
-    def get(self, *_args, **_kwargs):
-        return self._register
+        def add_middleware(self, *_args, **_kwargs):
+            return None
 
-    def post(self, *_args, **_kwargs):
-        return self._register
+        def on_event(self, *_args, **_kwargs):
+            def decorator(func):
+                return func
 
-    def patch(self, *_args, **_kwargs):
-        return self._register
+            return decorator
 
-    def delete(self, *_args, **_kwargs):
-        return self._register
+        def include_router(self, *_args, **_kwargs):
+            return None
 
+        def get(self, *_args, **_kwargs):
+            return self._register
 
-class _HTTPException(Exception):
-    def __init__(self, status_code: int, detail: str | None = None):
-        super().__init__(detail)
-        self.status_code = status_code
-        self.detail = detail
+        def post(self, *_args, **_kwargs):
+            return self._register
 
+        def patch(self, *_args, **_kwargs):
+            return self._register
 
-def _depends(call):
-    return call
+        def delete(self, *_args, **_kwargs):
+            return self._register
 
+    class _FastAPI(_BaseRouter):
+        def __init__(self, *args, **_kwargs):
+            super().__init__()
 
-class _HTTPAuthorizationCredentials(SimpleNamespace):
-    def __init__(self, credentials: str = ""):
-        super().__init__(credentials=credentials)
+    class _HTTPException(Exception):
+        def __init__(self, status_code: int, detail: str | None = None):
+            super().__init__(detail)
+            self.status_code = status_code
+            self.detail = detail
 
+    def _depends(call):
+        return call
 
-class _HTTPBearer:
-    def __call__(self, *args, **kwargs):
-        return None
+    class _APIRouter(_BaseRouter):
+        pass
 
+    class _HTTPAuthorizationCredentials(SimpleNamespace):
+        def __init__(self, credentials: str = ""):
+            super().__init__(credentials=credentials)
 
-fastapi_module = SimpleNamespace(
-    Depends=_depends,
-    FastAPI=_FastAPI,
-    HTTPException=_HTTPException,
-    Request=SimpleNamespace,
-)
-fastapi_security_module = SimpleNamespace(
-    HTTPAuthorizationCredentials=_HTTPAuthorizationCredentials,
-    HTTPBearer=_HTTPBearer,
-)
+    class _HTTPBearer:
+        def __call__(self, *args, **kwargs):
+            return None
 
-sys.modules.setdefault("fastapi", fastapi_module)
-sys.modules.setdefault("fastapi.security", fastapi_security_module)
+    fastapi_module = SimpleNamespace(
+        Depends=_depends,
+        FastAPI=_FastAPI,
+        APIRouter=_APIRouter,
+        HTTPException=_HTTPException,
+        Request=SimpleNamespace,
+    )
+    fastapi_security_module = SimpleNamespace(
+        HTTPAuthorizationCredentials=_HTTPAuthorizationCredentials,
+        HTTPBearer=_HTTPBearer,
+    )
+    cors_module = SimpleNamespace(CORSMiddleware=lambda *args, **kwargs: None)
+
+    sys.modules.setdefault("fastapi.middleware", SimpleNamespace(cors=cors_module))
+    sys.modules.setdefault("fastapi.middleware.cors", cors_module)
+
+    sys.modules.setdefault("fastapi", fastapi_module)
+    sys.modules.setdefault("fastapi.security", fastapi_security_module)
 
 
 class _SCIMClient:
