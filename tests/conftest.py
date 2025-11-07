@@ -1,5 +1,16 @@
 import sys
+from pathlib import Path
 from types import SimpleNamespace
+
+ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+
+msgraph_module = SimpleNamespace(GraphServiceClient=SimpleNamespace)
+msgraph_core_module = SimpleNamespace(APIVersion=SimpleNamespace(v1="v1.0"))
+sys.modules.setdefault("msgraph", msgraph_module)
+sys.modules.setdefault("msgraph.core", msgraph_core_module)
+sys.modules.setdefault("msgraph_core", msgraph_core_module)
 
 
 class _Field:
@@ -124,7 +135,10 @@ class _TracerProvider(SimpleNamespace):
         return _noop()
 
 
-trace_module = SimpleNamespace(get_tracer=lambda *_args, **_kwargs: _TracerProvider())
+trace_module = SimpleNamespace(
+    get_tracer=lambda *_args, **_kwargs: _TracerProvider(),
+    Span=SimpleNamespace,
+)
 export_module = SimpleNamespace(ConsoleSpanExporter=SimpleNamespace, BatchSpanProcessor=SimpleNamespace)
 resources_module = SimpleNamespace(Resource=SimpleNamespace)
 sdk_trace_module = SimpleNamespace(TracerProvider=_TracerProvider, export=export_module)
@@ -135,6 +149,27 @@ sys.modules.setdefault("opentelemetry.trace", trace_module)
 sys.modules.setdefault("opentelemetry.sdk", sdk_module)
 sys.modules.setdefault("opentelemetry.sdk.trace", sdk_trace_module)
 sys.modules.setdefault("opentelemetry.sdk.trace.export", export_module)
+
+semconv_http_attributes = SimpleNamespace(
+    HTTP_RESPONSE_STATUS_CODE=200,
+    HTTP_REQUEST_METHOD="GET",
+)
+semconv_attributes_module = SimpleNamespace(http_attributes=semconv_http_attributes)
+sys.modules.setdefault("opentelemetry.semconv", SimpleNamespace(attributes=semconv_attributes_module))
+sys.modules.setdefault("opentelemetry.semconv.attributes", semconv_attributes_module)
+sys.modules.setdefault("opentelemetry.semconv.attributes.http_attributes", semconv_http_attributes)
+sys.modules.setdefault(
+    "opentelemetry.semconv.attributes.url_attributes",
+    SimpleNamespace(URL_FULL="https://example.com", URL_SCHEME="https"),
+)
+sys.modules.setdefault(
+    "opentelemetry.semconv.attributes.network_attributes",
+    SimpleNamespace(NETWORK_PROTOCOL_NAME="https"),
+)
+sys.modules.setdefault(
+    "opentelemetry.semconv.attributes.server_attributes",
+    SimpleNamespace(SERVER_ADDRESS="localhost"),
+)
 sys.modules.setdefault("opentelemetry.sdk.resources", resources_module)
 
 

@@ -1,5 +1,4 @@
 from __future__ import annotations
-from __future__ import annotations
 
 from datetime import datetime
 from typing import Any, Dict, List
@@ -7,6 +6,9 @@ from typing import Any, Dict, List
 from fastapi import APIRouter, Depends, HTTPException, Request
 from pydantic import BaseModel, Field
 
+from audit import log_action
+
+from ..auth import require_roles, resolve_actor
 from ..services import DashboardServices
 
 
@@ -62,6 +64,7 @@ async def submit_request(
     payload: AccessRequestPayload,
     request: Request,
     services: DashboardServices = Depends(_get_services),
+    user: Dict[str, Any] = Depends(require_roles("admin", "operator")),
 ) -> AccessRequestRecord:
     store = _get_store(request)
 
@@ -96,12 +99,17 @@ async def submit_request(
     )
 
     store["access_requests"][request_id] = record
+    log_action(resolve_actor(user), "access_request", payload.resource_id)
     return record
 
 
 @router.get("/requests", response_model=List[AccessRequestRecord])
-async def list_requests(request: Request) -> List[AccessRequestRecord]:
+async def list_requests(
+    request: Request,
+    user: Dict[str, Any] = Depends(require_roles("admin", "operator", "viewer")),
+) -> List[AccessRequestRecord]:
     store = _get_store(request)
+    log_action(resolve_actor(user), "list_access_requests", "access_requests")
     return sorted(
         store["access_requests"].values(),
         key=lambda rec: rec.submitted_at,
@@ -115,6 +123,7 @@ async def approve_request(
     payload: AccessApprovalPayload,
     request: Request,
     services: DashboardServices = Depends(_get_services),
+    user: Dict[str, Any] = Depends(require_roles("admin")),
 ) -> AccessRequestRecord:
     store = _get_store(request)
     record = store["access_requests"].get(request_id)
@@ -131,4 +140,5 @@ async def approve_request(
         record.status = "approved"
 
     store["access_requests"][request_id] = record
+    log_action(resolve_actor(user), "approve_access_request", request_id)
     return record

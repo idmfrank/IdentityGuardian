@@ -33,11 +33,12 @@ def test_access_request_flow():
         justification="Quarterly reporting",
         resource_type="application",
     )
-    record = asyncio.run(access.submit_request(payload, request, services))
+    user_context = {"preferred_username": "tester@example.com", "roles": ["Admin", "Viewer"]}
+    record = asyncio.run(access.submit_request(payload, request, services, user=user_context))
     assert record.status in {"pending", "pending_approval"}
     assert record.user_id == "user001"
 
-    requests = asyncio.run(access.list_requests(request))
+    requests = asyncio.run(access.list_requests(request, user=user_context))
     assert any(item.request_id == record.request_id for item in requests)
 
 

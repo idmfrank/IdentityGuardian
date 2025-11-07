@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     framework_env: Literal["development", "staging", "production"] = Field(default="development")
 
     azure_tenant_id: str = Field(default="", description="Azure tenant ID for Graph access")
+    azure_client_id: str = Field(default="", description="Azure AD app registration client ID for the dashboard")
     azure_subscription_id: str = Field(default="", description="Azure subscription ID for resource scope")
 
     BOT_ID: str = Field(default="", description="Microsoft Teams bot application ID")
