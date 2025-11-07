@@ -1,5 +1,6 @@
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from datetime import datetime
+import logging
 import uuid
 from autogen_agentchat.agents import AssistantAgent
 from autogen_agentchat.messages import TextMessage
@@ -8,6 +9,8 @@ from ..models.identity import IdentityRisk, RiskLevel
 from ..integrations.identity_provider import IdentityProvider
 from ..integrations.grc import GRCProvider
 from ..integrations.siem import SIEMProvider
+from ..integrations.sentinel import SentinelMonitor
+from ..config.settings import get_settings
 from ..utils.telemetry import agent_metrics
 
 
@@ -19,10 +22,25 @@ class RiskAgent:
         grc_provider: GRCProvider,
         siem_provider: SIEMProvider
     ):
+        self._logger = logging.getLogger(__name__)
         self.identity_provider = identity_provider
         self.grc_provider = grc_provider
         self.siem_provider = siem_provider
         self.risks = {}
+        self._settings = get_settings()
+        self._sentinel_monitor: Optional[SentinelMonitor] = None
+
+        workspace_id = getattr(self._settings, "SENTINEL_WORKSPACE_ID", "")
+        if workspace_id:
+            try:
+                self._sentinel_monitor = SentinelMonitor(workspace_id)
+            except Exception as exc:
+                self._logger.warning(
+                    "Failed to initialize Sentinel monitor for workspace %s: %s",
+                    workspace_id,
+                    exc,
+                )
+                self._sentinel_monitor = None
         
         system_message = """You are an Identity Risk Management Agent specialized in compliance and risk assessment.
 
@@ -142,6 +160,21 @@ Provide clear risk assessments with actionable remediation steps."""
                 "severity": severity_map.get(normalized_level, "low")
             })
 
+        sentinel_summary = await self._get_sentinel_summary(user_id)
+        if sentinel_summary:
+            sentinel_score = sentinel_summary["sentinel_risk_score"]
+            if sentinel_score:
+                risk_score += min(sentinel_score, 100) / 100.0
+                severity = "high" if sentinel_score >= 70 else "medium" if sentinel_score >= 40 else "low"
+                risk_factors.append({
+                    "type": "sentinel_detection",
+                    "description": (
+                        f"Sentinel detected {len(sentinel_summary['risky_signins'])} risky sign-ins "
+                        f"and {len(sentinel_summary['privilege_escalations'])} privilege escalations"
+                    ),
+                    "severity": severity,
+                })
+
         risk_score = min(risk_score, 1.0)
 
         risk_level = self._determine_risk_level(risk_score)
@@ -181,7 +214,23 @@ Provide clear risk assessments with actionable remediation steps."""
             "risk_score": round(risk_score, 2),
             "risk_level": risk_level.value,
             "risk_factors": risk_factors,
-            "remediation_steps": identity_risk.remediation_steps
+            "remediation_steps": identity_risk.remediation_steps,
+            "sentinel": sentinel_summary,
+        }
+
+    async def _get_sentinel_summary(self, user_id: str) -> Optional[Dict[str, Any]]:
+        if not self._sentinel_monitor:
+            return None
+
+        risky_signins = await self._sentinel_monitor.query_risky_signins(user_id)
+        privilege_escalations = await self._sentinel_monitor.query_privilege_escalation(user_id)
+        sentinel_score = min(len(risky_signins) * 30 + len(privilege_escalations) * 50, 100)
+
+        return {
+            "workspace_id": self._sentinel_monitor.workspace_id,
+            "risky_signins": risky_signins,
+            "privilege_escalations": privilege_escalations,
+            "sentinel_risk_score": sentinel_score,
         }
     
     def _determine_risk_level(self, risk_score: float) -> RiskLevel:

@@ -1,5 +1,6 @@
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from datetime import datetime
+import logging
 import uuid
 from autogen_agentchat.agents import AssistantAgent
 from autogen_agentchat.messages import TextMessage
@@ -7,6 +8,8 @@ from autogen_ext.models.openai import OpenAIChatCompletionClient
 from ..models.identity import SecurityAlert
 from ..integrations.identity_provider import IdentityProvider
 from ..integrations.siem import SIEMProvider
+from ..integrations.sentinel import SentinelMonitor
+from ..config.settings import get_settings
 from ..utils.telemetry import agent_metrics
 
 
@@ -17,9 +20,24 @@ class MonitoringAgent:
         identity_provider: IdentityProvider,
         siem_provider: SIEMProvider
     ):
+        self._logger = logging.getLogger(__name__)
         self.identity_provider = identity_provider
         self.siem_provider = siem_provider
         self.alerts = {}
+        self._settings = get_settings()
+        self._sentinel_monitor: Optional[SentinelMonitor] = None
+
+        workspace_id = getattr(self._settings, "SENTINEL_WORKSPACE_ID", "")
+        if workspace_id:
+            try:
+                self._sentinel_monitor = SentinelMonitor(workspace_id)
+            except Exception as exc:
+                self._logger.warning(
+                    "Failed to initialize Sentinel monitor for workspace %s: %s",
+                    workspace_id,
+                    exc,
+                )
+                self._sentinel_monitor = None
         
         system_message = """You are an Identity Monitoring Agent specialized in threat detection.
 
@@ -85,6 +103,8 @@ Provide clear, actionable alerts with context and recommended response actions."
                 "description": f"Detected {len(data_exports)} data export events"
             })
         
+        sentinel_summary = await self.get_sentinel_summary(user_id)
+
         if anomalies:
             alert = await self._create_alert(user_id, anomalies)
             return {
@@ -92,13 +112,15 @@ Provide clear, actionable alerts with context and recommended response actions."
                 "anomalies_detected": len(anomalies),
                 "alert_id": alert["alert_id"],
                 "anomalies": anomalies,
-                "risk_level": "high" if any(a["severity"] == "high" for a in anomalies) else "medium"
+                "risk_level": "high" if any(a["severity"] == "high" for a in anomalies) else "medium",
+                "sentinel": sentinel_summary,
             }
-        
+
         return {
             "user_id": user_id,
             "anomalies_detected": 0,
-            "status": "normal"
+            "status": "normal",
+            "sentinel": sentinel_summary,
         }
     
     async def detect_dormant_accounts(self, inactive_days: int = 90) -> Dict[str, Any]:
@@ -158,7 +180,7 @@ Provide clear, actionable alerts with context and recommended response actions."
     
     async def monitor_privilege_escalation(self) -> Dict[str, Any]:
         agent_metrics.record_event("monitoring_agent", "privilege_escalation_monitor", {})
-        
+
         users = await self.identity_provider.list_users({"status": "active"})
         escalation_events = []
         
@@ -185,7 +207,25 @@ Provide clear, actionable alerts with context and recommended response actions."
             "users_with_escalations": len(escalation_events),
             "escalation_events": escalation_events
         }
-    
+
+    async def get_sentinel_summary(self, user_id: str) -> Dict[str, Any]:
+        """Return Sentinel findings for a given user if Sentinel is configured."""
+
+        if not self._sentinel_monitor:
+            return {"enabled": False}
+
+        risky_signins = await self._sentinel_monitor.query_risky_signins(user_id)
+        escalations = await self._sentinel_monitor.query_privilege_escalation(user_id)
+        sentinel_score = min(len(risky_signins) * 30 + len(escalations) * 50, 100)
+
+        return {
+            "enabled": True,
+            "workspace_id": self._sentinel_monitor.workspace_id,
+            "risky_signins": risky_signins,
+            "privilege_escalations": escalations,
+            "sentinel_risk_score": sentinel_score,
+        }
+
     async def _create_alert(self, user_id: str, anomalies: List[Dict[str, Any]]) -> Dict[str, Any]:
         alert_id = str(uuid.uuid4())
         
