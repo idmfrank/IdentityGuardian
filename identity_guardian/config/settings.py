@@ -51,6 +51,14 @@ class Settings(BaseSettings):
     itsm_provider: str = Field(default="mock", description="ITSM provider (mock, servicenow, jira)")
     siem_provider: str = Field(default="mock", description="SIEM provider (mock, splunk, sentinel)")
     grc_provider: str = Field(default="mock", description="GRC provider (mock, archer, servicenow_grc)")
+
+    # SCIM outbound target configuration
+    SCIM_TARGET_BASE_URL: str = Field(default="", description="Base URL for outbound SCIM target")
+    SCIM_TARGET_BEARER_TOKEN: str = Field(default="", description="Bearer token for outbound SCIM target")
+
+    # SCIM inbound server configuration
+    SCIM_SERVER_PORT: int = Field(default=8080, description="Port for inbound SCIM FastAPI server")
+    SCIM_SERVER_HOST: str = Field(default="0.0.0.0", description="Host address for inbound SCIM FastAPI server")
     
     class Config:
         env_file = ".env"
