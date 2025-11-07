@@ -70,7 +70,10 @@ class IdentityGuardianCLI:
                 self.model_client, self.identity_provider, self.itsm_provider
             )
             self.monitoring_agent = MonitoringAgent(
-                self.model_client, self.identity_provider, self.siem_provider
+                self.model_client,
+                self.identity_provider,
+                self.siem_provider,
+                self.grc_provider,
             )
             self.risk_agent = RiskAgent(
                 self.model_client, self.identity_provider, self.grc_provider, self.siem_provider

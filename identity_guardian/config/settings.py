@@ -25,6 +25,15 @@ class Settings(BaseSettings):
     BOT_ID: str = Field(default="", description="Microsoft Teams bot application ID")
     BOT_PASSWORD: str = Field(default="", description="Microsoft Teams bot client secret")
     TEAMS_CHANNEL_ID: str = Field(default="", description="Teams channel or chat conversation ID")
+    TEAMS_ALERT_CHANNEL_ID: str = Field(
+        default="",
+        description="Teams channel ID for high-risk auto-block alerts",
+    )
+
+    AUTO_BLOCK_THRESHOLD: int = Field(
+        default=90,
+        description="Total risk score threshold to auto-disable high-risk identities",
+    )
 
     SENTINEL_WORKSPACE_ID: str = Field(default="", description="Azure Sentinel Log Analytics workspace ID")
 
@@ -70,6 +79,10 @@ def get_settings() -> Settings:
     if _settings_instance is None:
         _settings_instance = Settings()
     return _settings_instance
+
+
+# Convenience accessor that mirrors the instructions used in documentation examples.
+settings = get_settings()
 
 
 async def get_graph_client() -> Optional[GraphServiceClient]:

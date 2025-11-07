@@ -13,6 +13,7 @@ Key capabilities include:
 - **Identity Lifecycle Management** - Joiner/mover/leaver workflows with automated provisioning
 - **Identity Monitoring** - Anomaly detection, Sentinel-driven insights, dormant accounts, and security alerting
 - **Identity Risk Management** - Risk scoring, compliance checking, and SoD violation detection
+- **Auto-Block on High Risk** - Automatically disable identities and notify Teams when combined risk crosses the policy threshold
 
 ## Architecture
 
@@ -70,6 +71,7 @@ The framework uses a multi-agent architecture with specialized agents coordinate
    - Find dormant and orphaned accounts
    - Monitor privilege escalations
    - Generate security alerts
+   - Auto-block high-risk identities based on Sentinel correlations
 
 5. **Risk Agent**
    - Calculate comprehensive risk scores
@@ -147,6 +149,10 @@ GRC_PROVIDER=mock
 BOT_ID=
 BOT_PASSWORD=
 TEAMS_CHANNEL_ID=
+TEAMS_ALERT_CHANNEL_ID=
+
+# Auto-block configuration
+AUTO_BLOCK_THRESHOLD=90
 
 # Microsoft Sentinel monitoring (optional)
 SENTINEL_WORKSPACE_ID=
@@ -225,18 +231,32 @@ The monitoring agent can run Microsoft Sentinel Kusto queries to incorporate ris
 - Risky sign-ins over the past 24 hours
 - Privilege escalation audit events over the past 24 hours
 
-The Sentinel results are folded into the overall risk score that the Risk Agent returns.
+When risky sign-ins overlap with privilege escalations, the monitoring agent will call the auto-block workflow to disable the account and post a Teams alert. The Sentinel results are folded into the overall risk score that the Risk Agent returns.
 
 ### Example Scripts
 
-For additional end-to-end scenarios, review and run `examples/example_usage.py`.
+For additional end-to-end scenarios, review and run `examples/example_usage.py` and the high-risk auto-block demo below.
+
+### Auto-Block Demo
+
+```bash
+python examples/auto_block_demo.py
+```
+
+The demo uses mock integrations but exercises the full workflow: calculating the combined Entra + Sentinel score, disabling the identity, and emitting a Teams alert payload.
+
+To continuously poll Sentinel for correlated events, run the scheduler:
+
+```bash
+python scheduler.py
+```
 
 ## Testing
 
 Run the unit test suite from the repository root:
 
 ```bash
-PYTHONPATH=. pytest
+python -m unittest discover -s tests
 ```
 
 ## Project Structure
@@ -264,8 +284,11 @@ identity_guardian/
 ├── utils/
 │   └── telemetry.py            # Logging & telemetry utilities
 ├── examples/
-│   └── example_usage.py        # Scripted agent demos
+│   ├── example_usage.py        # Scripted agent demos
+│   └── auto_block_demo.py      # High-risk auto-block demonstration
 └── __init__.py
+
+scheduler.py                    # Optional Sentinel watcher loop
 ```
 
 ## Next Steps

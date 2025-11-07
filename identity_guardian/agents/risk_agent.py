@@ -10,6 +10,7 @@ from ..integrations.identity_provider import IdentityProvider
 from ..integrations.grc import GRCProvider
 from ..integrations.siem import SIEMProvider
 from ..integrations.sentinel import SentinelMonitor
+from ..integrations.teams_bot import TeamsApprovalBot
 from ..config.settings import get_settings
 from ..utils.telemetry import agent_metrics
 
@@ -17,12 +18,13 @@ from ..utils.telemetry import agent_metrics
 class RiskAgent:
     def __init__(
         self,
-        model_client: OpenAIChatCompletionClient,
+        model_client: Optional[OpenAIChatCompletionClient],
         identity_provider: IdentityProvider,
         grc_provider: GRCProvider,
         siem_provider: SIEMProvider
     ):
         self._logger = logging.getLogger(__name__)
+        self.model_client = model_client
         self.identity_provider = identity_provider
         self.grc_provider = grc_provider
         self.siem_provider = siem_provider
@@ -62,12 +64,14 @@ Risk assessment factors:
 
 Provide clear risk assessments with actionable remediation steps."""
 
-        self.agent = AssistantAgent(
-            name="risk_agent",
-            model_client=model_client,
-            system_message=system_message,
-            description="Assesses identity risks and ensures compliance"
-        )
+        self.agent: Optional[AssistantAgent] = None
+        if model_client is not None:
+            self.agent = AssistantAgent(
+                name="risk_agent",
+                model_client=model_client,
+                system_message=system_message,
+                description="Assesses identity risks and ensures compliance"
+            )
     
     async def calculate_user_risk_score(self, user_id: str) -> Dict[str, Any]:
         agent_metrics.record_event("risk_agent", "risk_assessment", {
@@ -218,6 +222,22 @@ Provide clear risk assessments with actionable remediation steps."""
             "sentinel": sentinel_summary,
         }
 
+    def _score_identity_protection(self, identity_risk: str) -> int:
+        normalized = identity_risk or ""
+        normalized = normalized.lower()
+        for token in ("risk", ":"):
+            normalized = normalized.replace(token, "")
+        normalized = normalized.strip()
+        if "critical" in normalized:
+            return 90
+        if "high" in normalized:
+            return 80
+        if "medium" in normalized:
+            return 50
+        if "low" in normalized:
+            return 20
+        return 0
+
     async def _get_sentinel_summary(self, user_id: str) -> Optional[Dict[str, Any]]:
         if not self._sentinel_monitor:
             return None
@@ -232,6 +252,51 @@ Provide clear risk assessments with actionable remediation steps."""
             "privilege_escalations": privilege_escalations,
             "sentinel_risk_score": sentinel_score,
         }
+
+    async def calculate_and_mitigate(self, user_id: str) -> Dict[str, Any]:
+        """Calculate total risk and auto-block identities above the configured threshold."""
+
+        entra_risk = await self.identity_provider.get_user_risk(user_id)
+        entra_score = self._score_identity_protection(entra_risk)
+
+        sentinel_summary = await self._get_sentinel_summary(user_id) or {
+            "risky_signins": [],
+            "privilege_escalations": [],
+            "sentinel_risk_score": 0,
+        }
+        sentinel_score = int(sentinel_summary.get("sentinel_risk_score") or 0)
+
+        total_risk = min(entra_score + sentinel_score, 100)
+
+        result: Dict[str, Any] = {
+            "user_id": user_id,
+            "entra_risk": entra_risk,
+            "sentinel_events": len(sentinel_summary.get("risky_signins", []))
+            + len(sentinel_summary.get("privilege_escalations", [])),
+            "total_risk_score": total_risk,
+        }
+
+        threshold = getattr(self._settings, "AUTO_BLOCK_THRESHOLD", 90)
+        if total_risk >= threshold:
+            block_reason = (
+                f"Auto-block: Risk {total_risk} (Entra: {entra_score}, Sentinel: {sentinel_score})"
+            )
+            disable_result = await self.identity_provider.disable_user(user_id, block_reason)
+            result["action"] = "blocked"
+            result["block_result"] = disable_result
+
+            try:
+                bot = TeamsApprovalBot()
+                await bot.send_alert(user_id, block_reason, total_risk)
+                result["alert"] = "sent"
+            except Exception as exc:  # pragma: no cover - alert failures shouldn't block flow
+                self._logger.warning("Failed to send Teams alert for %s: %s", user_id, exc)
+                result["alert"] = "failed"
+                result["alert_error"] = str(exc)
+        else:
+            result["action"] = "monitored"
+
+        return result
     
     def _determine_risk_level(self, risk_score: float) -> RiskLevel:
         if risk_score >= 0.75:

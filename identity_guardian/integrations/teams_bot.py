@@ -112,5 +112,63 @@ class TeamsApprovalBot:
                         "Failed to send Teams approval card: status=%s response=%s",
                         resp.status,
                         response_payload,
+                )
+                return response_payload
+
+    async def send_alert(self, user_id: str, reason: str, risk_score: int) -> Dict[str, Any]:
+        """Send a high-risk auto-block alert to the configured Teams channel."""
+
+        channel_id = getattr(self._settings, "TEAMS_ALERT_CHANNEL_ID", "") or self.conversation_id
+        if not channel_id:
+            raise ValueError(
+                "TEAMS_ALERT_CHANNEL_ID or TEAMS_CHANNEL_ID must be configured to send alerts"
+            )
+
+        token = await self._get_token()
+
+        card = {
+            "type": "AdaptiveCard",
+            "version": "1.5",
+            "body": [
+                {
+                    "type": "TextBlock",
+                    "text": "HIGH RISK USER BLOCKED",
+                    "weight": "Bolder",
+                    "color": "Attention",
+                },
+                {"type": "TextBlock", "text": f"User: {user_id}"},
+                {"type": "TextBlock", "text": f"Risk Score: {risk_score}/100"},
+                {
+                    "type": "TextBlock",
+                    "text": f"Reason: {reason}",
+                    "wrap": True,
+                },
+            ],
+        }
+
+        activity = {
+            "type": "message",
+            "from": {"id": self.bot_id},
+            "conversation": {"id": channel_id},
+            "recipient": {"id": channel_id},
+            "attachments": [
+                {
+                    "contentType": "application/vnd.microsoft.card.adaptive",
+                    "content": card,
+                }
+            ],
+        }
+
+        url = f"{self.service_url}v3/conversations/{channel_id}/activities"
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=activity, headers=headers) as resp:
+                response_payload = await resp.json()
+                if resp.status >= 400:
+                    logger.error(
+                        "Failed to send Teams alert: status=%s response=%s",
+                        resp.status,
+                        response_payload,
                     )
                 return response_payload
