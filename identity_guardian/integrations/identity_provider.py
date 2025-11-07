@@ -42,6 +42,11 @@ class IdentityProvider(ABC):
     async def get_user_risk(self, user_id: str) -> str:
         pass
 
+    @abstractmethod
+    async def disable_user(self, user_id: str, reason: str) -> str:
+        """Disable or suspend the specified user account."""
+        pass
+
     async def get_current_entitlements(self, user_id: str) -> str:
         """Return a human-readable summary of a user's recorded access."""
         assignments = await self.get_user_access(user_id)
@@ -192,6 +197,14 @@ class MockIdentityProvider(IdentityProvider):
 
     async def get_user_risk(self, user_id: str) -> str:
         return "Identity Protection Risk: none (mock)"
+
+    async def disable_user(self, user_id: str, reason: str) -> str:
+        user = self.users.get(user_id)
+        if not user:
+            return "Error: User not found"
+
+        user.status = UserStatus.SUSPENDED
+        return f"User {user_id} disabled. Reason: {reason}"
 
     async def request_access(
         self,
@@ -449,6 +462,19 @@ class AzureIdentityProvider(IdentityProvider):
             self._logger.error("Error fetching app role assignments: %s", exc, exc_info=True)
 
         return assignments
+
+    async def disable_user(self, user_id: str, reason: str) -> str:
+        client = await self._get_client()
+        payload = {"accountEnabled": False}
+
+        try:
+            await client.users.by_user_id(user_id).patch(payload)
+        except Exception as exc:
+            self._logger.error("Failed to disable %s: %s", user_id, exc, exc_info=True)
+            return f"Error disabling user: {exc}"
+
+        self._logger.info("User %s disabled via Graph API. Reason: %s", user_id, reason)
+        return f"User {user_id} disabled. Reason: {reason}"
 
     async def get_current_entitlements(self, user_id: str) -> str:
         assignments = await self.get_user_access(user_id)

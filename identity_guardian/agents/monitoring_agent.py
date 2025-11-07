@@ -9,6 +9,8 @@ from ..models.identity import SecurityAlert
 from ..integrations.identity_provider import IdentityProvider
 from ..integrations.siem import SIEMProvider
 from ..integrations.sentinel import SentinelMonitor
+from ..integrations.grc import GRCProvider, MockGRCProvider
+from .risk_agent import RiskAgent
 from ..config.settings import get_settings
 from ..utils.telemetry import agent_metrics
 
@@ -16,13 +18,16 @@ from ..utils.telemetry import agent_metrics
 class MonitoringAgent:
     def __init__(
         self,
-        model_client: OpenAIChatCompletionClient,
+        model_client: Optional[OpenAIChatCompletionClient],
         identity_provider: IdentityProvider,
-        siem_provider: SIEMProvider
+        siem_provider: SIEMProvider,
+        grc_provider: Optional[GRCProvider] = None,
     ):
         self._logger = logging.getLogger(__name__)
+        self.model_client = model_client
         self.identity_provider = identity_provider
         self.siem_provider = siem_provider
+        self.grc_provider = grc_provider or MockGRCProvider()
         self.alerts = {}
         self._settings = get_settings()
         self._sentinel_monitor: Optional[SentinelMonitor] = None
@@ -58,12 +63,14 @@ Monitoring focus areas:
 
 Provide clear, actionable alerts with context and recommended response actions."""
 
-        self.agent = AssistantAgent(
-            name="monitoring_agent",
-            model_client=model_client,
-            system_message=system_message,
-            description="Detects anomalous access patterns and security threats"
-        )
+        self.agent: Optional[AssistantAgent] = None
+        if model_client is not None:
+            self.agent = AssistantAgent(
+                name="monitoring_agent",
+                model_client=model_client,
+                system_message=system_message,
+                description="Detects anomalous access patterns and security threats"
+            )
     
     async def analyze_user_behavior(self, user_id: str) -> Dict[str, Any]:
         agent_metrics.record_event("monitoring_agent", "behavior_analysis", {
@@ -275,7 +282,7 @@ Provide clear, actionable alerts with context and recommended response actions."
     async def get_alert(self, alert_id: str) -> Dict[str, Any]:
         if alert_id not in self.alerts:
             return {"error": "Alert not found"}
-        
+
         alert = self.alerts[alert_id]
         return {
             "alert_id": alert.alert_id,
@@ -288,3 +295,37 @@ Provide clear, actionable alerts with context and recommended response actions."
             "recommended_actions": alert.recommended_actions,
             "status": alert.status
         }
+
+    async def watch_for_critical_events(self) -> List[Dict[str, Any]]:
+        """Query Sentinel for correlated critical events and auto-block high-risk users."""
+
+        if not self._sentinel_monitor:
+            self._logger.debug("Sentinel monitor not configured; skipping critical event watch")
+            return []
+
+        try:
+            candidates = await self._sentinel_monitor.query_auto_block_candidates()
+        except Exception as exc:
+            self._logger.error("Failed to query Sentinel for critical events: %s", exc, exc_info=True)
+            return []
+
+        if not candidates:
+            return []
+
+        risk_agent = RiskAgent(
+            self.model_client,
+            self.identity_provider,
+            self.grc_provider,
+            self.siem_provider,
+        )
+        risk_agent._sentinel_monitor = self._sentinel_monitor
+
+        results: List[Dict[str, Any]] = []
+        for user in candidates:
+            try:
+                outcome = await risk_agent.calculate_and_mitigate(user)
+                results.append(outcome)
+            except Exception as exc:
+                self._logger.error("Auto-block workflow failed for %s: %s", user, exc, exc_info=True)
+
+        return results

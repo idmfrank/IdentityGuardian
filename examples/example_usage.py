@@ -184,8 +184,9 @@ async def example_monitoring():
     
     identity_provider = MockIdentityProvider()
     siem_provider = MockSIEMProvider()
-    
-    agent = MonitoringAgent(model_client, identity_provider, siem_provider)
+    grc_provider = MockGRCProvider()
+
+    agent = MonitoringAgent(model_client, identity_provider, siem_provider, grc_provider)
     
     result = await agent.analyze_user_behavior("user001")
     

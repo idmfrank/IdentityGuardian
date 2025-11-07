@@ -64,3 +64,42 @@ class SentinelMonitor:
             return []
 
         return [row.as_dict() for row in tables[0].rows]
+
+    async def query_auto_block_candidates(self) -> List[str]:
+        """Return user principal names that triggered correlated high-risk events."""
+
+        query = """
+        let mfaBypass =
+            SigninLogs
+            | where TimeGenerated > ago(1h)
+            | where AuthenticationRequirement == "singleFactorAuthentication"
+            | project UserPrincipalName, SigninTime = TimeGenerated;
+        let roleAdds =
+            AuditLogs
+            | where TimeGenerated > ago(1h)
+            | where OperationName contains "Add member to role"
+            | project TargetUser = tolower(tostring(TargetResources[0].userPrincipalName)), RoleAddTime = TimeGenerated;
+        mfaBypass
+        | join kind=inner (roleAdds) on $left.UserPrincipalName == $right.TargetUser
+        | project UserPrincipalName
+        | distinct UserPrincipalName
+        """
+
+        try:
+            result = await self._client.query_workspace(self.workspace_id, query, timespan=None)
+        except Exception as exc:
+            logger.error("Sentinel auto-block candidate query failed: %s", exc, exc_info=True)
+            return []
+
+        tables = getattr(result, "tables", []) or []
+        if not tables:
+            return []
+
+        users = []
+        for row in tables[0].rows:
+            try:
+                users.append(row[0])
+            except (IndexError, TypeError):  # pragma: no cover - defensive
+                continue
+
+        return [u for u in {str(u).strip() for u in users if u}]
