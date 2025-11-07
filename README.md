@@ -48,6 +48,7 @@ IdentityGuardian also ships with a production-ready web dashboard that exposes t
 - **Styling** – Tailwind CSS utility classes for consistent theming.
 - **State** – Lightweight global state via Zustand stores.
 - **Charts** – Recharts components for request trends, risk distribution, and monitoring metrics.
+- **Authentication** – Azure AD via MSAL on the frontend with JWT validation in FastAPI.
 
 ### Project Structure
 
@@ -157,6 +158,55 @@ async def audit_middleware(request: Request, call_next):
 @app.get("/")
 def root():
     return {"message": "IdentityGuardian API"}
+```
+
+### Azure AD Authentication
+
+IdentityGuardian now supports Microsoft Entra ID (Azure AD) single sign-on for the dashboard with end-to-end JWT validation and role-based access control (RBAC).
+
+#### Frontend configuration
+
+1. Install the MSAL packages:
+
+   ```bash
+   cd frontend
+   npm install
+   ```
+
+2. Copy the example environment file and provide your Azure AD app registration values:
+
+   ```bash
+   cp frontend/.env.example frontend/.env
+   ```
+
+   | Variable               | Description                                             |
+   | ---------------------- | ------------------------------------------------------- |
+   | `VITE_AZURE_CLIENT_ID` | Azure AD application (client) ID for the SPA           |
+   | `VITE_AZURE_TENANT_ID` | Directory (tenant) ID hosting the IdentityGuardian app |
+
+3. Run the Vite dev server as usual (`npm run dev`) and authenticate with an Azure AD account.
+
+#### Backend configuration
+
+1. Ensure the following environment variables are set (for example in `.env`):
+
+   ```env
+   AZURE_CLIENT_ID=your-app-client-id
+   AZURE_TENANT_ID=your-tenant-id
+   ```
+
+   These values are used to download the Azure AD JWKS and validate access tokens with `backend/auth.py`.
+
+2. Install the backend dependencies (`pip install -r requirements.txt`) so that `PyJWT[crypto]` is available for JWKS parsing.
+
+3. Protected endpoints in `backend/api/access.py` use the `require_roles` helper to enforce RBAC. Assign Azure AD app roles named **Admin**, **Operator**, and **Viewer** to align with the default policy.
+
+#### Tests
+
+Run the dedicated authentication tests to validate RBAC behaviour:
+
+```bash
+pytest tests/test_auth.py
 ```
 
 Routers encapsulate domain logic.  For example, `backend/api/access.py` orchestrates access requests through the AccessRequestAgent:
