@@ -35,6 +35,12 @@ class _BaseModel:
     def model_dump(self):  # pragma: no cover - lightweight helper
         return self.__dict__.copy()
 
+    @classmethod
+    def model_validate(cls, data):  # pragma: no cover - minimal constructor helper
+        if data is None:
+            data = {}
+        return cls(**data)
+
 
 class _AssistantAgent:
     def __init__(self, *args, **kwargs):
@@ -55,13 +61,26 @@ class _ModelClient:
 try:  # pragma: no cover - prefer real pydantic when installed
     import pydantic as _real_pydantic  # type: ignore
 except Exception:  # pragma: no cover - fallback stub
-    pydantic_module = SimpleNamespace(Field=_Field, BaseModel=_BaseModel)
+    class _ValidationError(Exception):
+        pass
+
+    pydantic_module = SimpleNamespace(
+        Field=_Field,
+        BaseModel=_BaseModel,
+        ValidationError=_ValidationError,
+    )
     sys.modules.setdefault("pydantic", pydantic_module)
 
 try:  # pragma: no cover - prefer real pydantic-settings when installed
     import pydantic_settings as _real_pydantic_settings  # type: ignore
 except Exception:  # pragma: no cover - fallback stub
-    pydantic_settings_module = SimpleNamespace(BaseSettings=_BaseSettings)
+    def _settings_config_dict(**_kwargs):
+        return dict(**_kwargs)
+
+    pydantic_settings_module = SimpleNamespace(
+        BaseSettings=_BaseSettings,
+        SettingsConfigDict=_settings_config_dict,
+    )
     sys.modules.setdefault("pydantic_settings", pydantic_settings_module)
 
 autogen_agents = SimpleNamespace(AssistantAgent=_AssistantAgent)
@@ -140,6 +159,12 @@ except Exception:  # pragma: no cover - fallback stub for unit tests
 
             return decorator
 
+        def exception_handler(self, *_args, **_kwargs):
+            def decorator(func):
+                return func
+
+            return decorator
+
         def include_router(self, *_args, **_kwargs):
             return None
 
@@ -155,9 +180,16 @@ except Exception:  # pragma: no cover - fallback stub for unit tests
         def delete(self, *_args, **_kwargs):
             return self._register
 
+        def middleware(self, *_args, **_kwargs):
+            def decorator(func):
+                return func
+
+            return decorator
+
     class _FastAPI(_BaseRouter):
         def __init__(self, *args, **_kwargs):
             super().__init__()
+            self.state = SimpleNamespace()
 
     class _HTTPException(Exception):
         def __init__(self, status_code: int, detail: str | None = None):
@@ -179,12 +211,16 @@ except Exception:  # pragma: no cover - fallback stub for unit tests
         def __call__(self, *args, **kwargs):
             return None
 
+    def _header(default=None, **_kwargs):  # pragma: no cover - simple stub
+        return default
+
     fastapi_module = SimpleNamespace(
         Depends=_depends,
         FastAPI=_FastAPI,
         APIRouter=_APIRouter,
         HTTPException=_HTTPException,
         Request=SimpleNamespace,
+        Header=_header,
     )
     fastapi_security_module = SimpleNamespace(
         HTTPAuthorizationCredentials=_HTTPAuthorizationCredentials,
@@ -192,11 +228,62 @@ except Exception:  # pragma: no cover - fallback stub for unit tests
     )
     cors_module = SimpleNamespace(CORSMiddleware=lambda *args, **kwargs: None)
 
+    class _JSONResponse(dict):
+        def __init__(self, status_code: int = 200, content: dict | None = None):
+            super().__init__(content or {})
+            self.status_code = status_code
+
+    responses_module = SimpleNamespace(JSONResponse=_JSONResponse)
+
     sys.modules.setdefault("fastapi.middleware", SimpleNamespace(cors=cors_module))
     sys.modules.setdefault("fastapi.middleware.cors", cors_module)
+    sys.modules.setdefault("fastapi.responses", responses_module)
 
     sys.modules.setdefault("fastapi", fastapi_module)
     sys.modules.setdefault("fastapi.security", fastapi_security_module)
+
+
+try:  # pragma: no cover - prefer real slowapi when installed
+    import slowapi as _slowapi  # type: ignore
+except Exception:  # pragma: no cover - fallback stub
+    class _Limiter:
+        def __init__(self, *args, **_kwargs):
+            pass
+
+        def limit(self, *_args, **_kwargs):
+            def decorator(func):
+                return func
+
+            return decorator
+
+    slowapi_module = SimpleNamespace(
+        Limiter=_Limiter,
+        errors=SimpleNamespace(RateLimitExceeded=Exception),
+        util=SimpleNamespace(get_remote_address=lambda *_args, **_kwargs: "test"),
+    )
+    sys.modules.setdefault("slowapi", slowapi_module)
+    sys.modules.setdefault("slowapi.errors", slowapi_module.errors)
+    sys.modules.setdefault("slowapi.util", slowapi_module.util)
+
+
+try:  # pragma: no cover - prefer real tenacity when installed
+    import tenacity as _tenacity  # type: ignore
+except Exception:  # pragma: no cover - fallback stub
+    def _retry(*_args, **_kwargs):
+        def decorator(func):
+            return func
+
+        return decorator
+
+    def _identity(*_args, **_kwargs):
+        return None
+
+    tenacity_module = SimpleNamespace(
+        retry=_retry,
+        stop_after_attempt=_identity,
+        wait_exponential=_identity,
+    )
+    sys.modules.setdefault("tenacity", tenacity_module)
 
 
 class _SCIMClient:

@@ -14,6 +14,9 @@ Key capabilities include:
 - **Identity Monitoring** - Anomaly detection, Sentinel-driven insights, dormant accounts, and security alerting
 - **Identity Risk Management** - Risk scoring, compliance checking, and SoD violation detection
 - **Auto-Block on High Risk** - Clone a Conditional Access block policy, target the risky user, and notify SecOps when the risk threshold is exceeded
+- **SCIM 2.0 Compliance** - Discovery endpoints, patch interoperability, and inbound validation hooks
+- **Production Security** - Rate-limited webhooks with CSRF protection and strict payload validation
+- **Audit & Observability** - SQLite audit logging with OpenTelemetry spans on every API call
 
 ## Architecture
 
@@ -71,14 +74,49 @@ IdentityGuardian/
 
 ### Backend (FastAPI)
 
-`backend/main.py` wires the modular routers and enables the SPA to call the API securely:
+`backend/main.py` wires the modular routers, enables the SPA to call the API securely, and attaches audit instrumentation:
 
 ```python
-from fastapi import FastAPI
+from datetime import datetime
+from typing import Any, Dict
+
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from api import access, lifecycle, risk, monitoring, scim, groups
+
+from audit import bind_connection, init_db, log_action, reset_connection
+from opentelemetry.trace import get_tracer
+
+from .api import access, lifecycle, monitoring, risk, scim, groups
+from .services import DashboardServices, init_services
 
 app = FastAPI(title="IdentityGuardian Dashboard")
+tracer = get_tracer(__name__)
+
+
+def _initial_data(services: DashboardServices) -> Dict[str, Any]:
+    """Seed in-memory collections that back the dashboard endpoints."""
+
+    settings = services.settings
+    role_groups = {
+        role: {
+            "displayName": f"{settings.SCIM_GROUP_PREFIX or ''}{group}",
+            "members": [],
+            "createdAt": datetime.utcnow(),
+        }
+        for role, group in settings.ROLE_TO_GROUP_MAP.items()
+    }
+
+    return {
+        "access_requests": {},
+        "review_campaigns": {},
+        "review_items": {},
+        "lifecycle_events": [],
+        "monitoring_alerts": [],
+        "risk_events": {},
+        "scim_outbound": [],
+        "scim_inbound": [],
+        "groups": role_groups,
+    }
 
 app.add_middleware(
     CORSMiddleware,
@@ -94,6 +132,26 @@ app.include_router(risk.router, prefix="/api/risk")
 app.include_router(monitoring.router, prefix="/api/monitoring")
 app.include_router(scim.router, prefix="/api/scim")
 app.include_router(groups.router, prefix="/api/groups")
+
+
+@app.on_event("startup")
+async def startup() -> None:
+    services = await init_services()
+    app.state.services = services
+    app.state.data = _initial_data(services)
+    app.state.audit_db = init_db()
+
+
+@app.middleware("http")
+async def audit_middleware(request: Request, call_next):
+    conn = getattr(app.state, "audit_db", None)
+    token = bind_connection(conn) if conn is not None else None
+    with tracer.start_as_current_span("http.request"):
+        response = await call_next(request)
+    log_action("dashboard", f"{request.method} {request.url.path}", "api")
+    if token is not None:
+        reset_connection(token)
+    return response
 
 
 @app.get("/")
@@ -179,7 +237,7 @@ Risk insights are rendered with Recharts pie charts, and lifecycle, monitoring, 
 | Lifecycle      | `/lifecycle`      | Joiner, mover, and leaver workflows |
 | Monitoring     | `/monitoring`     | Sentinel alerts and anomaly feeds  |
 | Risk           | `/risk`           | Risk scores and automated blocking |
-| SCIM Logs      | `/scim`           | Inbound/outbound SCIM visibility    |
+| SCIM Logs      | `/scim`           | Inbound/outbound SCIM visibility with audit trail |
 | Groups         | `/groups`         | Manage groups and membership        |
 
 ### Local Development
@@ -193,6 +251,7 @@ docker-compose up --build
 - Backend – available at `http://localhost:8000`.
 - Frontend – available at `http://localhost:5173`.
 - Environment variables such as `IDENTITY_PROVIDER=azure` and `AZURE_TENANT_ID` can be set in `.env` and consumed by `docker-compose`.
+- Docker health checks gate the frontend until the backend is healthy.
 
 To develop each service independently:
 
@@ -204,9 +263,23 @@ uvicorn backend.main:app --reload --port 8000
 cd frontend
 npm install
 npm run dev
+cd ..
+
+# Scheduler / background workers
+python scheduler.py
+
+# Run the test suite
+pytest -v
 ```
 
 The frontend proxies API calls to `http://localhost:8000/api/*` so that joiner/mover/leaver lifecycle flows, SCIM operations, access requests, and Sentinel risk monitoring are immediately available once both services are running.
+
+### Production Hardening & Compliance
+
+- **Audit logging** persists request metadata to `audit.db` via lightweight SQLite tables.
+- **Webhook security** enforces rate limits, validates CSRF tokens via the `X-CSRF-Token` header, and rejects malformed payloads.
+- **SCIM discovery** endpoints (`/scim/v2/ServiceProviderConfig` and `/.well-known/scim`) advertise supported capabilities for compliant clients.
+- **Resilient outbound provisioning** uses exponential backoff to retry transient SCIM API errors.
 
 ## Features
 

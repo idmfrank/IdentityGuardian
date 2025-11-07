@@ -10,6 +10,7 @@ from pydantic import BaseModel
 from scim2_client import Client as SCIMClient
 from scim2_models import Group as SCIMGroup
 from scim2_models import User as SCIMUser
+from tenacity import retry, stop_after_attempt, wait_exponential
 
 from ..config.settings import settings
 from ..models.identity import UserStatus
@@ -17,6 +18,38 @@ from .identity_provider import get_identity_provider
 
 logger = logging.getLogger(__name__)
 security = HTTPBearer()
+
+
+def service_provider_config_payload() -> Dict[str, Any]:
+    return {
+        "schemas": ["urn:ietf:params:scim:schemas:core:2.0:ServiceProviderConfig"],
+        "patch": {"supported": True},
+        "bulk": {"supported": False},
+        "filter": {"supported": True, "maxResults": 200},
+        "etag": {"supported": False},
+        "sort": {"supported": False},
+        "authenticationSchemes": [
+            {
+                "name": "Bearer Token",
+                "type": "http",
+                "description": "Bearer token authentication",
+            }
+        ],
+    }
+
+
+def well_known_scim_payload() -> Dict[str, Any]:
+    return {
+        "schemas": ["urn:ietf:params:scim:api:messages:2.0:Discovery"],
+        "documentationUri": "https://github.com/idmfrank/IdentityGuardian",
+        "authenticationSchemes": [
+            {
+                "name": "Bearer Token",
+                "description": "Bearer token auth",
+                "specUri": "http://tools.ietf.org/html/rfc6750",
+            }
+        ],
+    }
 
 
 class SCIMOutboundClient:
@@ -33,8 +66,13 @@ class SCIMOutboundClient:
             bearer_token=settings.SCIM_TARGET_BEARER_TOKEN,
         )
 
+    @staticmethod
+    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=0.5, max=4), reraise=True)
+    def _call_with_retry(func, *args, **kwargs):
+        return func(*args, **kwargs)
+
     async def _execute(self, func, *args, **kwargs):
-        return await asyncio.to_thread(func, *args, **kwargs)
+        return await asyncio.to_thread(self._call_with_retry, func, *args, **kwargs)
 
     async def provision_user(self, user_data: Dict[str, Any]) -> str:
         """Create a new user on the SCIM target."""
@@ -112,14 +150,9 @@ class SCIMOutboundClient:
                     "value": [{"value": member} for member in add],
                 }
             )
-        if remove:
-            for member in remove:
-                operations.append(
-                    {
-                        "op": "remove",
-                        "path": f'members[value eq "{member}"]',
-                    }
-                )
+        for member in remove or []:
+            path = f'members[value eq "{member}"]'
+            operations.append({"op": "remove", "path": path})
 
         if not operations:
             return f"No updates applied to group {group_id}."
@@ -160,6 +193,14 @@ class SCIMInboundServer:
             raise HTTPException(status_code=401, detail="Unauthorized")
 
     def _setup_routes(self) -> None:
+        @self.app.get("/scim/v2/ServiceProviderConfig")
+        async def service_provider_config():
+            return service_provider_config_payload()
+
+        @self.app.get("/.well-known/scim")
+        async def well_known_scim():
+            return well_known_scim_payload()
+
         @self.app.get("/scim/v2/Users")
         async def list_users(credentials: HTTPAuthorizationCredentials = Depends(security)):
             self._verify_bearer(credentials)
@@ -364,5 +405,12 @@ def get_scim_inbound() -> SCIMInboundServer:
     return SCIMInboundServer()
 
 
-__all__ = ["SCIMOutboundClient", "SCIMInboundServer", "get_scim_outbound", "get_scim_inbound"]
+__all__ = [
+    "SCIMOutboundClient",
+    "SCIMInboundServer",
+    "get_scim_outbound",
+    "get_scim_inbound",
+    "service_provider_config_payload",
+    "well_known_scim_payload",
+]
 

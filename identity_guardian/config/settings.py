@@ -5,7 +5,7 @@ from typing import Dict, Literal, Optional, Union
 from azure.identity.aio import AzureCliCredential, ManagedIdentityCredential
 from msgraph import GraphServiceClient
 from pydantic import Field
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -28,6 +28,11 @@ class Settings(BaseSettings):
     TEAMS_ALERT_CHANNEL_ID: str = Field(
         default="",
         description="Teams channel ID for high-risk auto-block alerts",
+    )
+
+    TEAMS_WEBHOOK_SECRET: str = Field(
+        default="",
+        description="Shared secret used to validate CSRF tokens for Teams webhooks",
     )
 
     CA_BLOCK_POLICY_ID: str = Field(
@@ -72,10 +77,13 @@ class Settings(BaseSettings):
     # Optional prefix applied to outbound SCIM group names
     SCIM_GROUP_PREFIX: str = Field(default="IG-", description="Prefix prepended to outbound SCIM groups")
     
-    class Config:
-        env_file = ".env"
-        env_file_encoding = "utf-8"
-        case_sensitive = False
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+        validate_default=True,
+        case_sensitive=False,
+    )
 
 
 _settings_instance = None
