@@ -3,44 +3,77 @@
 from __future__ import annotations
 
 import logging
-from typing import Any, Dict
+from typing import Any, Dict, Optional
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ValidationError
+from slowapi import Limiter
+from slowapi.errors import RateLimitExceeded
+from slowapi.util import get_remote_address
 
-from identity_guardian.config.settings import get_graph_client
+from identity_guardian.config.settings import get_graph_client, get_settings
 from identity_guardian.integrations.identity_provider import get_identity_provider
 from identity_guardian.integrations.teams_bot import TeamsApprovalBot
 
 
 app = FastAPI()
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+
+
+@app.exception_handler(RateLimitExceeded)
+async def rate_limit_handler(request: Request, exc: RateLimitExceeded):  # pragma: no cover - simple handler
+    return JSONResponse(status_code=429, content={"detail": "Rate limit exceeded"})
 logger = logging.getLogger(__name__)
+settings = get_settings()
 
 
-def _extract_action(payload: Dict[str, Any]) -> Dict[str, Any]:
-    value = payload.get("value") or {}
-    data = value.get("data") if isinstance(value, dict) else {}
-    return data if isinstance(data, dict) else {}
+class TeamsAction(BaseModel):
+    action: Optional[str] = None
+    user_id: Optional[str] = None
+    request_id: Optional[str] = None
+
+
+class TeamsWebhookPayload(BaseModel):
+    type: str
+    value: Dict[str, Any] | None = None
+
+    def extract_action(self) -> TeamsAction:
+        payload = {}
+        if isinstance(self.value, dict):
+            inner = self.value.get("data")
+            if isinstance(inner, dict):
+                payload = inner
+        return TeamsAction.model_validate(payload)
 
 
 @app.post("/webhook/teams")
-async def teams_webhook(request: Request):
-    payload = await request.json()
-    logger.debug("Received Teams webhook payload: %s", payload)
+@limiter.limit("10/minute")
+async def teams_webhook(request: Request, csrf_token: str | None = Header(default=None, alias="X-CSRF-Token")):
+    if settings.TEAMS_WEBHOOK_SECRET and csrf_token != settings.TEAMS_WEBHOOK_SECRET:
+        raise HTTPException(status_code=403, detail="Invalid CSRF token")
 
-    if payload.get("type") != "message":
+    raw_payload = await request.json()
+    logger.debug("Received Teams webhook payload: %s", raw_payload)
+
+    try:
+        payload = TeamsWebhookPayload.model_validate(raw_payload)
+    except ValidationError as exc:
+        logger.warning("Rejected Teams webhook due to validation error: %s", exc)
+        raise HTTPException(status_code=400, detail="Invalid payload")
+
+    if payload.type != "message":
         return {"text": "Ignored."}
 
-    action = _extract_action(payload)
-    if not action:
-        return {"text": "No action data provided."}
-
-    decision = action.get("action")
-
-    if not decision:
+    action = payload.extract_action()
+    if not action.action:
         return {"text": "Missing action."}
 
+    decision = action.action
+
     if decision == "re_enable":
-        user_id = action.get("user_id")
+        user_id = action.user_id
         if not user_id:
             return {"text": "Missing user identifier."}
 
@@ -58,7 +91,7 @@ async def teams_webhook(request: Request):
     if decision == "keep_blocked":
         return {"text": "User remains blocked pending investigation."}
 
-    request_id = action.get("request_id")
+    request_id = action.request_id
     if not request_id:
         return {"text": "Missing approval context."}
 
