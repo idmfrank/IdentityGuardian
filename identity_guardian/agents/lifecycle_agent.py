@@ -1,12 +1,12 @@
 import logging
-from typing import Dict, Any, List, Optional
-from datetime import datetime
 import uuid
+from datetime import datetime
+from typing import Any, Dict, List, Optional
 from autogen_agentchat.agents import AssistantAgent
 from autogen_agentchat.messages import TextMessage
 from autogen_ext.models.openai import OpenAIChatCompletionClient
 from ..models.identity import LifecycleEvent, LifecycleEventType, User, UserStatus
-from ..integrations.identity_provider import IdentityProvider
+from ..integrations.identity_provider import IdentityProvider, get_identity_provider
 from ..integrations.itsm import ITSMProvider
 from ..integrations.scim import SCIMOutboundClient, get_scim_outbound
 from ..utils.telemetry import agent_metrics
@@ -224,7 +224,7 @@ Always prioritize security and compliance in lifecycle operations."""
         event_id = str(uuid.uuid4())
         
         user_access = await self.identity_provider.get_user_access(user_id)
-        
+
         deprovisioning_tasks = [
             "Disable user account immediately",
             "Revoke all system access",
@@ -232,10 +232,9 @@ Always prioritize security and compliance in lifecycle operations."""
             "Archive user mailbox",
             "Transfer owned resources"
         ]
-        
-        for access in user_access:
-            await self.identity_provider.revoke_access(user_id, access["resource_id"])
-        
+
+        await self.identity_provider.deprovision_user(user_id)
+
         event = LifecycleEvent(
             event_id=event_id,
             event_type=LifecycleEventType.LEAVER,
@@ -262,8 +261,9 @@ Always prioritize security and compliance in lifecycle operations."""
             "event_id": event_id,
             "access_revoked": len(user_access)
         })
-        
+
         scim_status = await self._sync_scim_leaver(user)
+        group_cleanup_count = await self._remove_user_from_scim_groups(user_id)
 
         result = {
             "event_id": event_id,
@@ -277,6 +277,8 @@ Always prioritize security and compliance in lifecycle operations."""
 
         if scim_status:
             result["scim_status"] = scim_status
+        if group_cleanup_count:
+            result["group_cleanup_count"] = group_cleanup_count
 
         return result
     
@@ -350,6 +352,72 @@ Always prioritize security and compliance in lifecycle operations."""
         except Exception as exc:  # pragma: no cover - network failure paths
             logger.error("SCIM leaver deprovision failed: %s", exc)
             return None
+
+    async def handle_leaver(self, user_id: str) -> str:
+        """Directly deprovision a leaver and clean up SCIM group memberships."""
+
+        provider = await get_identity_provider()
+        await provider.deprovision_user(user_id)
+        cleaned = await self._remove_user_from_scim_groups(user_id)
+        if cleaned:
+            return f"Leaver complete: user + group cleanup ({cleaned} groups)"
+        return "Leaver complete: user + group cleanup"
+
+    async def _remove_user_from_scim_groups(self, user_id: str) -> int:
+        scim_client = self.scim_outbound
+        if scim_client is None:
+            try:
+                scim_client = get_scim_outbound()
+                self.scim_outbound = scim_client
+            except ValueError:
+                return 0
+
+        try:
+            response = await scim_client.list_groups()
+        except Exception as exc:  # pragma: no cover - network failure paths
+            logger.error("Unable to enumerate SCIM groups for cleanup: %s", exc, exc_info=True)
+            return 0
+
+        if hasattr(response, "resources"):
+            groups = response.resources or []
+        elif isinstance(response, dict):
+            groups = response.get("Resources", [])
+        else:
+            groups = []
+
+        removed = 0
+        for group in groups:
+            if isinstance(group, dict):
+                group_id = group.get("id") or group.get("Id")
+                members = group.get("members") or group.get("Members") or []
+            else:
+                group_id = getattr(group, "id", None)
+                members = getattr(group, "members", None)
+
+            if not group_id or not members:
+                continue
+
+            member_ids: List[str] = []
+            for member in members:
+                if isinstance(member, dict):
+                    member_id = member.get("value") or member.get("valueId")
+                else:
+                    member_id = getattr(member, "value", None)
+                if member_id:
+                    member_ids.append(member_id)
+
+            if user_id not in member_ids:
+                continue
+
+            try:
+                await scim_client.update_group_members(group_id, remove=[user_id])
+                removed += 1
+            except Exception as exc:  # pragma: no cover - network failure paths
+                logger.error(
+                    "Failed removing %s from SCIM group %s: %s", user_id, group_id, exc, exc_info=True
+                )
+
+        return removed
 
     def _build_scim_payload(self, user: User, active: bool) -> Dict[str, Any]:
         email = user.email or f"{user.username}@example.com"

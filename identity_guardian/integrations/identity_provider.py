@@ -428,6 +428,67 @@ class AzureIdentityProvider(IdentityProvider):
             )
             return False
 
+    async def list_entra_groups(self, prefix: Optional[str] = None) -> List[Dict[str, Any]]:
+        client = await self._get_client()
+        try:
+            response = await client.groups.get()
+        except Exception as exc:
+            self._logger.error("Error listing Entra groups: %s", exc, exc_info=True)
+            return []
+
+        groups: List[Dict[str, Any]] = []
+        for item in getattr(response, "value", []):
+            data = self._to_dict(item)
+            if not data:
+                continue
+            display_name = data.get("display_name") or data.get("displayName")
+            if prefix and display_name and not display_name.startswith(prefix):
+                continue
+            groups.append({"id": data.get("id"), "displayName": display_name})
+
+        return groups
+
+    async def create_entra_group(self, display_name: str) -> Any:
+        client = await self._get_client()
+        body = {"displayName": display_name, "mailEnabled": False, "securityEnabled": True}
+        try:
+            return await client.groups.post(body)
+        except Exception as exc:
+            self._logger.error("Error creating Entra group %s: %s", display_name, exc, exc_info=True)
+            raise
+
+    async def add_users_to_group(self, group_id: str, user_ids: List[str]) -> None:
+        client = await self._get_client()
+        for user_id in user_ids:
+            reference = {"@odata.id": f"https://graph.microsoft.com/v1.0/directoryObjects/{user_id}"}
+            try:
+                await client.groups.by_group_id(group_id).members.ref.post(reference)
+                self._logger.info("Added %s to group %s", user_id, group_id)
+            except Exception as exc:
+                self._logger.error(
+                    "Failed to add %s to group %s: %s", user_id, group_id, exc, exc_info=True
+                )
+
+    async def remove_users_from_group(self, group_id: str, user_ids: List[str]) -> None:
+        client = await self._get_client()
+        for user_id in user_ids:
+            try:
+                await client.groups.by_group_id(group_id).members.by_directory_object_id(user_id).ref.delete()
+                self._logger.info("Removed %s from group %s", user_id, group_id)
+            except Exception as exc:
+                self._logger.error(
+                    "Failed to remove %s from group %s: %s", user_id, group_id, exc, exc_info=True
+                )
+
+    async def delete_entra_group(self, group_id: str) -> None:
+        client = await self._get_client()
+        try:
+            await client.groups.by_group_id(group_id).delete()
+            self._logger.info("Deleted group %s", group_id)
+        except Exception as exc:
+            self._logger.error("Failed to delete group %s: %s", group_id, exc, exc_info=True)
+            raise
+
     async def get_user_access(self, user_id: str) -> List[Dict[str, Any]]:
         client = await self._get_client()
         assignments: List[Dict[str, Any]] = []
