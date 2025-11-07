@@ -1,6 +1,7 @@
 import logging
 import os
 from abc import ABC, abstractmethod
+from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Union
 
@@ -10,6 +11,7 @@ from ..config.settings import (
     PRIVILEGED_RESOURCE_ROLE_MAP,
     RESOURCE_GROUP_MAP,
     get_graph_client,
+    settings,
 )
 from ..integrations.teams_bot import TeamsApprovalBot
 from ..models.identity import User, UserStatus
@@ -46,6 +48,22 @@ class IdentityProvider(ABC):
     async def disable_user(self, user_id: str, reason: str) -> str:
         """Disable or suspend the specified user account."""
         pass
+
+    async def block_via_ca(self, user_id: str, reason: str) -> str:
+        """Apply a Conditional Access block. Default fallback disables the account."""
+        logger.debug(
+            "Conditional Access block not implemented for %s; falling back to account disable",
+            self.__class__.__name__,
+        )
+        return await self.disable_user(user_id, reason)
+
+    async def remove_ca_block(self, user_id: str) -> str:
+        """Remove a Conditional Access block. Default implementation is a no-op."""
+        logger.debug(
+            "Conditional Access block removal not implemented for %s",
+            self.__class__.__name__,
+        )
+        return "Conditional Access block removal not supported for this provider."
 
     async def get_current_entitlements(self, user_id: str) -> str:
         """Return a human-readable summary of a user's recorded access."""
@@ -96,6 +114,7 @@ class MockIdentityProvider(IdentityProvider):
     def __init__(self):
         self.users = self._create_mock_users()
         self.access_assignments: Dict[str, List[Dict[str, Any]]] = {}
+        self.ca_blocks: List[Dict[str, str]] = []
 
     def _create_mock_users(self) -> Dict[str, User]:
         return {
@@ -205,6 +224,19 @@ class MockIdentityProvider(IdentityProvider):
 
         user.status = UserStatus.SUSPENDED
         return f"User {user_id} disabled. Reason: {reason}"
+
+    async def block_via_ca(self, user_id: str, reason: str) -> str:
+        self.ca_blocks.append({"user_id": user_id, "reason": reason})
+        return f"Mock Conditional Access block recorded for {user_id}. Reason: {reason}"
+
+    async def remove_ca_block(self, user_id: str) -> str:
+        before = len(self.ca_blocks)
+        self.ca_blocks = [block for block in self.ca_blocks if block["user_id"] != user_id]
+        if before == len(self.ca_blocks):
+            return f"No mock Conditional Access block found for {user_id}"
+        if user_id in self.users:
+            self.users[user_id].status = UserStatus.ACTIVE
+        return f"Mock Conditional Access block removed for {user_id}"
 
     async def request_access(
         self,
@@ -475,6 +507,124 @@ class AzureIdentityProvider(IdentityProvider):
 
         self._logger.info("User %s disabled via Graph API. Reason: %s", user_id, reason)
         return f"User {user_id} disabled. Reason: {reason}"
+
+    def _build_ca_block_payload(
+        self,
+        user_id: str,
+        reason: str,
+        base_policy: Optional[Any] = None,
+    ) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {
+            "displayName": f"BLOCK: {user_id} - {reason[:50]}",
+            "state": "enabled",
+            "conditions": {
+                "users": {"includeUsers": [user_id]},
+                "applications": {"includeApplications": ["all"]},
+            },
+            "grantControls": {"operator": "OR", "builtInControls": ["block"]},
+        }
+
+        if base_policy:
+            base_dict = self._to_dict(base_policy)
+            conditions = base_dict.get("conditions") or base_dict.get("conditions", {})
+            if conditions:
+                copied_conditions = deepcopy(conditions)
+                users_section = copied_conditions.get("users") or {}
+                users_section = deepcopy(users_section)
+                users_section["includeUsers"] = [user_id]
+                users_section.pop("excludeUsers", None)
+                copied_conditions["users"] = users_section
+
+                applications_section = copied_conditions.get("applications") or {}
+                if not applications_section.get("includeApplications"):
+                    applications_section["includeApplications"] = ["all"]
+                copied_conditions["applications"] = applications_section
+                payload["conditions"] = copied_conditions
+
+            grant_controls = (
+                base_dict.get("grantControls")
+                or base_dict.get("grant_controls")
+                or payload["grantControls"]
+            )
+            payload["grantControls"] = grant_controls
+
+            session_controls = base_dict.get("sessionControls") or base_dict.get("session_controls")
+            if session_controls:
+                payload["sessionControls"] = session_controls
+
+        return payload
+
+    async def block_via_ca(self, user_id: str, reason: str) -> str:
+        client = await self._get_client()
+        template_policy_id = getattr(settings, "CA_BLOCK_POLICY_ID", "")
+        if not template_policy_id:
+            self._logger.warning(
+                "CA_BLOCK_POLICY_ID not configured; falling back to account disable for %s",
+                user_id,
+            )
+            return await super().block_via_ca(user_id, reason)
+
+        base_policy = None
+        try:
+            base_policy = await client.identity.conditional_access.policies.by_conditional_access_policy_id(
+                template_policy_id
+            ).get()
+        except Exception as exc:
+            self._logger.warning(
+                "Failed to load base Conditional Access policy %s: %s",
+                template_policy_id,
+                exc,
+            )
+
+        policy_payload = self._build_ca_block_payload(user_id, reason, base_policy)
+
+        try:
+            created_policy = await client.identity.conditional_access.policies.post(policy_payload)
+        except Exception as exc:
+            self._logger.error(
+                "Failed to create Conditional Access block for %s: %s", user_id, exc, exc_info=True
+            )
+            return await super().block_via_ca(user_id, reason)
+
+        created_dict = self._to_dict(created_policy)
+        policy_id = created_dict.get("id") or created_dict.get("policy_id") or "unknown"
+        self._logger.info(
+            "Applied Conditional Access block for %s via policy %s", user_id, policy_id
+        )
+        return f"Conditional Access block applied. Policy ID: {policy_id}"
+
+    async def remove_ca_block(self, user_id: str) -> str:
+        client = await self._get_client()
+        deleted = 0
+        prefix = f"BLOCK: {user_id}"
+
+        try:
+            policies = await client.identity.conditional_access.policies.get()
+            for policy in getattr(policies, "value", []):
+                policy_dict = self._to_dict(policy)
+                display_name = policy_dict.get("displayName") or policy_dict.get("display_name") or ""
+                if not display_name.startswith(prefix):
+                    continue
+                policy_id = policy_dict.get("id")
+                if not policy_id:
+                    continue
+                await client.identity.conditional_access.policies.by_conditional_access_policy_id(
+                    policy_id
+                ).delete()
+                deleted += 1
+        except Exception as exc:
+            self._logger.error(
+                "Failed to remove Conditional Access block for %s: %s", user_id, exc, exc_info=True
+            )
+            return f"Error removing block: {exc}"
+
+        if deleted == 0:
+            return f"No Conditional Access block found for {user_id}."
+
+        self._logger.info(
+            "Removed %s Conditional Access block policies for %s", deleted, user_id
+        )
+        return f"Conditional Access block removed for {user_id}. Policies deleted: {deleted}"
 
     async def get_current_entitlements(self, user_id: str) -> str:
         assignments = await self.get_user_access(user_id)

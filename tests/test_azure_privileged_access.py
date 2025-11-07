@@ -1,7 +1,10 @@
 import sys
 import unittest
 from datetime import datetime, timezone
+from pathlib import Path
 from types import SimpleNamespace
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 
 class _DummyCredential:  # pragma: no cover - simple shim for imports

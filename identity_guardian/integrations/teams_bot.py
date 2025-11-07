@@ -172,3 +172,69 @@ class TeamsApprovalBot:
                         response_payload,
                     )
                 return response_payload
+
+    async def send_investigation_card(
+        self, user_id: str, reason: str, risk_score: int
+    ) -> Dict[str, Any]:
+        """Send an investigation task card to the configured SecOps channel."""
+
+        channel_id = getattr(self._settings, "INVESTIGATION_CHANNEL_ID", "")
+        if not channel_id:
+            raise ValueError(
+                "INVESTIGATION_CHANNEL_ID must be configured to send investigation cards"
+            )
+
+        token = await self._get_token()
+
+        card = {
+            "type": "AdaptiveCard",
+            "version": "1.5",
+            "body": [
+                {
+                    "type": "TextBlock",
+                    "text": "INVESTIGATE USER",
+                    "weight": "Bolder",
+                    "color": "Warning",
+                },
+                {"type": "TextBlock", "text": f"User: {user_id}"},
+                {"type": "TextBlock", "text": f"Risk: {risk_score}/100"},
+                {"type": "TextBlock", "text": f"Reason: {reason}", "wrap": True},
+            ],
+            "actions": [
+                {
+                    "type": "Action.Submit",
+                    "title": "Re-enable User",
+                    "data": {"action": "re_enable", "user_id": user_id},
+                },
+                {
+                    "type": "Action.Submit",
+                    "title": "Keep Blocked",
+                    "data": {"action": "keep_blocked", "user_id": user_id},
+                },
+            ],
+        }
+
+        activity = {
+            "type": "message",
+            "conversation": {"id": channel_id},
+            "attachments": [
+                {
+                    "contentType": "application/vnd.microsoft.card.adaptive",
+                    "content": card,
+                }
+            ],
+        }
+
+        url = f"{self.service_url}v3/conversations/{channel_id}/activities"
+        headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+        async with aiohttp.ClientSession() as session:
+            async with session.post(url, json=activity, headers=headers) as resp:
+                response_payload = await resp.json()
+                if resp.status >= 400:
+                    logger.error(
+                        "Failed to send Teams investigation card: status=%s response=%s",
+                        resp.status,
+                        response_payload,
+                    )
+                return response_payload

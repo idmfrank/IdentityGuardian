@@ -13,7 +13,7 @@ Key capabilities include:
 - **Identity Lifecycle Management** - Joiner/mover/leaver workflows with automated provisioning
 - **Identity Monitoring** - Anomaly detection, Sentinel-driven insights, dormant accounts, and security alerting
 - **Identity Risk Management** - Risk scoring, compliance checking, and SoD violation detection
-- **Auto-Block on High Risk** - Automatically disable identities and notify Teams when combined risk crosses the policy threshold
+- **Auto-Block on High Risk** - Clone a Conditional Access block policy, target the risky user, and notify SecOps when the risk threshold is exceeded
 
 ## Architecture
 
@@ -153,6 +153,8 @@ TEAMS_ALERT_CHANNEL_ID=
 
 # Auto-block configuration
 AUTO_BLOCK_THRESHOLD=90
+CA_BLOCK_POLICY_ID=
+INVESTIGATION_CHANNEL_ID=
 
 # Microsoft Sentinel monitoring (optional)
 SENTINEL_WORKSPACE_ID=
@@ -161,6 +163,35 @@ SENTINEL_WORKSPACE_ID=
 AZURE_TENANT_ID=your-tenant-id
 AZURE_SUBSCRIPTION_ID=your-sub-id
 ```
+
+### Conditional Access Auto-Block
+
+IdentityGuardian prefers Conditional Access (CA) enforcement to hard disabling an account. Cloning a pre-approved CA template keeps sign-in, multi-factor authentication, and device policies intact while blocking all access paths for the targeted identity. It also leaves the account enabled so that password resets and self-service remediation continue to work during an investigation.
+
+| Feature | `accountEnabled = false` | Conditional Access Block |
+| --- | --- | --- |
+| Immediate block | ✅ | ✅ |
+| Detailed audit trail | ✅ | ✅ |
+| User can reset password | ❌ | ✅ |
+| Reversible without downtime | ❌ | ✅ |
+| Works with MFA, device conditions, etc. | ❌ | ✅ |
+| Recommended approach | ❌ | ✅ |
+
+To enable the workflow:
+
+1. Create a **template** CA policy that blocks all apps and is kept disabled (for example `TEMPLATE - High Risk Block`).
+2. Copy the policy ID and set `CA_BLOCK_POLICY_ID` in `.env`.
+3. Provide a SecOps collaboration space (Teams channel, etc.) and set `INVESTIGATION_CHANNEL_ID`.
+
+When the risk agent detects a score above `AUTO_BLOCK_THRESHOLD`, it clones the template policy, scopes it to the impacted user, enables it, and posts an investigation card to the SecOps channel. Analysts can select **Re-enable User** directly from the card, which deletes the cloned CA policy and notifies the alert channel that access has been restored.
+
+Run the demo locally to observe the flow:
+
+```bash
+python examples/auto_block_demo.py
+```
+
+You will see the risk agent report a `ca_blocked` action in the console; when the webhook receives a re-enable action it removes the policy and broadcasts a restoration alert.
 
 ### Privileged Identity Management (PIM) Configuration
 

@@ -8,6 +8,8 @@ from typing import Any, Dict
 from fastapi import FastAPI, Request
 
 from identity_guardian.config.settings import get_graph_client
+from identity_guardian.integrations.identity_provider import get_identity_provider
+from identity_guardian.integrations.teams_bot import TeamsApprovalBot
 
 
 app = FastAPI()
@@ -32,9 +34,32 @@ async def teams_webhook(request: Request):
     if not action:
         return {"text": "No action data provided."}
 
-    request_id = action.get("request_id")
     decision = action.get("action")
-    if not request_id or not decision:
+
+    if not decision:
+        return {"text": "Missing action."}
+
+    if decision == "re_enable":
+        user_id = action.get("user_id")
+        if not user_id:
+            return {"text": "Missing user identifier."}
+
+        provider = await get_identity_provider()
+        result = await provider.remove_ca_block(user_id)
+
+        bot = TeamsApprovalBot()
+        try:
+            await bot.send_alert(user_id, "Access restored after investigation.", 0)
+        except Exception as exc:  # pragma: no cover - notification failures shouldn't block webhook
+            logger.warning("Failed to send restoration alert for %s: %s", user_id, exc)
+
+        return {"text": result}
+
+    if decision == "keep_blocked":
+        return {"text": "User remains blocked pending investigation."}
+
+    request_id = action.get("request_id")
+    if not request_id:
         return {"text": "Missing approval context."}
 
     client = await get_graph_client()
