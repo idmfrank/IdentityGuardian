@@ -493,6 +493,8 @@ class AzureIdentityProvider(IdentityProvider):
 
         try:
             request = client.users.by_user_id(user_id).transitive_member_of
+            # Limit the selected fields to avoid Graph returning 400 errors for tenants
+            # where the default projection is not allowed on transitive member requests.
             request.query_parameters_select = "id,displayName,@odata.type"
             memberships = await request.get()
             for member in getattr(memberships, "value", []):
@@ -523,7 +525,11 @@ class AzureIdentityProvider(IdentityProvider):
     async def get_user_risk(self, user_id: str) -> str:
         client = await self._get_client()
         try:
-            risk = await client.identity_protection.risky_users.by_risky_user_id(user_id).get()
+            request = client.identity_protection.risky_users.by_risky_user_id(user_id)
+            # Request only the fields we need to avoid tenants that reject the
+            # broader default projection on risky user lookups.
+            request.query_parameters_select = "id,riskLevel,riskState"
+            risk = await request.get()
             if risk is None:
                 return "Identity Protection Risk: none"
 
