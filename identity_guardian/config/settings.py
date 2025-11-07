@@ -1,6 +1,6 @@
 import logging
 import os
-from typing import Literal, Optional, Union
+from typing import Dict, Literal, Optional, Union
 
 from azure.identity.aio import AzureCliCredential, ManagedIdentityCredential
 from msgraph import GraphServiceClient
@@ -59,6 +59,18 @@ class Settings(BaseSettings):
     # SCIM inbound server configuration
     SCIM_SERVER_PORT: int = Field(default=8080, description="Port for inbound SCIM FastAPI server")
     SCIM_SERVER_HOST: str = Field(default="0.0.0.0", description="Host address for inbound SCIM FastAPI server")
+
+    # Map internal role names to SCIM group display names
+    ROLE_TO_GROUP_MAP: Dict[str, str] = Field(
+        default_factory=lambda: {
+            "contributor_prod_rg": "Azure-Prod-Contributors",
+            "global_reader": "Global-Readers",
+            "finance_analyst": "Finance-Analysts",
+        }
+    )
+
+    # Optional prefix applied to outbound SCIM group names
+    SCIM_GROUP_PREFIX: str = Field(default="IG-", description="Prefix prepended to outbound SCIM groups")
     
     class Config:
         env_file = ".env"

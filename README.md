@@ -166,23 +166,54 @@ AZURE_SUBSCRIPTION_ID=your-sub-id
 
 ### SCIM 2.0 Integration
 
-IdentityGuardian provides both outbound (source) and inbound (target) SCIM 2.0 support for joiner/mover/leaver automation.
+IdentityGuardian now offers end-to-end SCIM 2.0 group provisioning alongside existing user automation. Outbound flows push groups and memberships to SaaS targets while the inbound FastAPI server receives group CRUD requests from platforms like Microsoft Entra ID or SailPoint.
 
-1. **Configure environment variables** – update `.env` with the SCIM bearer token, base URL for your target, and inbound server host/port values. Sample entries are included in `.env.example`.
+1. **Configure environment variables** – update `.env` with the SCIM bearer token, base URL for your target, and inbound server host/port values. The new `ROLE_TO_GROUP_MAP` and `SCIM_GROUP_PREFIX` settings in `config/settings.py` drive automatic role-to-group mappings for Access Request Agent workflows.
 2. **Run the inbound server (optional)** – expose `/scim/v2/Users` and `/scim/v2/Groups` endpoints via:
 
    ```bash
    python -c "from identity_guardian.integrations.scim import get_scim_inbound; get_scim_inbound().run()"
    ```
 
-   Pair this with a tunneling service such as `ngrok http 8080` when testing with SaaS identity sources like Entra ID or SailPoint.
-3. **Trigger outbound provisioning** – once configured, lifecycle flows automatically push SCIM changes. You can also run the demo script:
+   Pair this with a tunneling service such as `ngrok http 8080` when testing with SaaS identity sources like Entra ID or SailPoint. Group create, patch, delete, and list operations are enforced with bearer token validation and call into the Microsoft Graph provider.
+3. **Trigger outbound provisioning** – once configured, lifecycle flows and access approvals automatically push SCIM user and group changes. Demo scripts:
 
    ```bash
-   python examples/scim_demo.py
+   python examples/scim_demo.py          # Joiner / mover / leaver user flows
+   python examples/group_demo.py         # Group CRUD + membership updates
    ```
 
-   The script exercises joiner, mover, and leaver operations via the outbound client and prints the SCIM responses.
+   The group demo creates a prefixed SCIM group, adds members, and patches membership via the outbound client.
+
+#### Feature Matrix
+
+| Operation | Outbound (Source) | Inbound (Target) |
+| --- | --- | --- |
+| Create Group | ✅ | ✅ |
+| Add/Remove Members | ✅ | ✅ |
+| Delete Group | ✅ | ✅ |
+| Auto-sync on Access Request | ✅ | — |
+| Cleanup on Leaver | ✅ | — |
+
+#### Quick Tests
+
+Create a group via the inbound endpoint (requires the inbound server to be running):
+
+```bash
+curl -X POST http://localhost:8080/scim/v2/Groups \
+  -H "Authorization: Bearer $SCIM_TARGET_BEARER_TOKEN" \
+  -H "Content-Type: application/scim+json" \
+  -d '{
+    "schemas": ["urn:ietf:params:scim:schemas:core:2.0:Group"],
+    "displayName": "IG-Finance-Analysts"
+  }'
+```
+
+Exercise outbound group creation and membership updates:
+
+```bash
+python examples/group_demo.py
+```
 
 ### Conditional Access Auto-Block
 

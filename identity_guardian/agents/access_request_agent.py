@@ -1,14 +1,20 @@
-from typing import Dict, Any, List, Optional
-from datetime import datetime
+import logging
 import uuid
+from datetime import datetime
+from typing import Any, Dict, List, Optional
 from autogen_agentchat.agents import AssistantAgent
 from autogen_agentchat.messages import TextMessage
 from autogen_ext.models.openai import OpenAIChatCompletionClient
-from ..models.identity import AccessRequest, AccessRequestStatus
+from ..config.settings import settings
+from ..integrations.grc import GRCProvider
 from ..integrations.identity_provider import IdentityProvider, get_identity_provider
 from ..integrations.itsm import ITSMProvider
-from ..integrations.grc import GRCProvider
+from ..integrations.scim import get_scim_outbound
+from ..models.identity import AccessRequest, AccessRequestStatus
 from ..utils.telemetry import agent_metrics
+
+
+logger = logging.getLogger(__name__)
 
 
 class AccessRequestAgent:
@@ -50,6 +56,54 @@ Always provide clear, actionable recommendations."""
             system_message=system_message,
             description="Handles access request intake, validation, and approval workflows"
         )
+
+    async def handle_request(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Handle an inbound access request and mirror membership to mapped SCIM groups."""
+
+        required_fields = ["user_id", "resource_id", "access_level", "business_justification"]
+        missing = [field for field in required_fields if not data.get(field)]
+        if missing:
+            raise ValueError(f"Missing required request fields: {', '.join(missing)}")
+
+        result = await self.process_request(
+            user_id=data["user_id"],
+            resource_id=data["resource_id"],
+            resource_type=data.get("resource_type", "application"),
+            access_level=data["access_level"],
+            business_justification=data["business_justification"],
+        )
+
+        role_name = data.get("resource_id")
+        group_name = settings.ROLE_TO_GROUP_MAP.get(role_name) if role_name else None
+        if not group_name:
+            return result
+
+        try:
+            scim = get_scim_outbound()
+        except ValueError as exc:
+            logger.info("SCIM outbound disabled: %s", exc)
+            return result
+
+        try:
+            group_id = await self.get_or_create_scim_group(group_name, scim)
+        except Exception as exc:  # pragma: no cover - network failure paths
+            logger.error("Failed to sync SCIM group for role %s: %s", role_name, exc, exc_info=True)
+            result["group_sync"] = {
+                "displayName": group_name,
+                "status": "error",
+                "detail": str(exc),
+            }
+            return result
+
+        if group_id:
+            await scim.update_group_members(group_id, add=[data["user_id"]])
+            result["group_sync"] = {
+                "displayName": f"{settings.SCIM_GROUP_PREFIX or ''}{group_name}",
+                "groupId": group_id,
+                "status": "member_added",
+            }
+
+        return result
     
     async def process_request(
         self,
@@ -226,6 +280,35 @@ Provide a brief recommendation (approve/reject/conditional) with reasoning."""
             "provisioned": provisioned,
             "provisioning_message": access_response
         }
+
+    async def get_or_create_scim_group(
+        self, display_name: str, scim_client=None
+    ) -> Optional[str]:
+        """Return the SCIM group identifier for the supplied display name, creating it if missing."""
+
+        scim = scim_client or get_scim_outbound()
+        normalized = f"{settings.SCIM_GROUP_PREFIX or ''}{display_name}" if settings.SCIM_GROUP_PREFIX else display_name
+        filter_query = f'displayName eq "{normalized}"'
+
+        response = await scim.list_groups(filter=filter_query)
+        resources: List[Any]
+        if hasattr(response, "resources"):
+            resources = response.resources or []
+        elif isinstance(response, dict):
+            resources = response.get("Resources", [])
+        else:
+            resources = []
+
+        if resources:
+            first = resources[0]
+            if isinstance(first, dict):
+                return first.get("id") or first.get("Id")
+            return getattr(first, "id", None)
+
+        created = await scim.create_group(display_name)
+        if isinstance(created, dict):
+            return created.get("id") or created.get("Id")
+        return getattr(created, "id", None)
 
     async def _ensure_identity_provider(self) -> IdentityProvider:
         if self.identity_provider is None:

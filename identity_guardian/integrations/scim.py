@@ -1,7 +1,8 @@
 """SCIM 2.0 integrations for outbound provisioning and inbound server support."""
 import asyncio
 import logging
-from typing import Any, Dict, Optional
+import re
+from typing import Any, Dict, List, Optional
 
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
@@ -75,6 +76,62 @@ class SCIMOutboundClient:
         patch = [{"op": "replace", "path": "active", "value": False}]
         await self._execute(self.client.patch_user, user_id, patch)
         return f"User {user_id} deprovisioned in target."
+
+    async def list_groups(self, filter: Optional[str] = None):
+        """Return groups from the SCIM target, optionally filtered by display name."""
+
+        kwargs: Dict[str, Any] = {}
+        if filter:
+            kwargs["filter"] = filter
+        return await self._execute(self.client.list_groups, **kwargs)
+
+    async def create_group(self, display_name: str, members: Optional[List[str]] = None):
+        """Create a new SCIM group with an optional member list."""
+
+        prefix = settings.SCIM_GROUP_PREFIX or ""
+        group = SCIMGroup(
+            displayName=f"{prefix}{display_name}",
+            members=[{"value": member} for member in members] if members else [],
+        )
+        return await self._execute(self.client.create_group, group)
+
+    async def update_group_members(
+        self,
+        group_id: str,
+        add: Optional[List[str]] = None,
+        remove: Optional[List[str]] = None,
+    ) -> str:
+        """Apply SCIM PATCH operations to add or remove group members."""
+
+        operations: List[Dict[str, Any]] = []
+        if add:
+            operations.append(
+                {
+                    "op": "add",
+                    "path": "members",
+                    "value": [{"value": member} for member in add],
+                }
+            )
+        if remove:
+            for member in remove:
+                operations.append(
+                    {
+                        "op": "remove",
+                        "path": f'members[value eq "{member}"]',
+                    }
+                )
+
+        if not operations:
+            return f"No updates applied to group {group_id}."
+
+        await self._execute(self.client.patch_group, group_id, operations)
+        return f"Group {group_id} updated."
+
+    async def delete_group(self, group_id: str) -> str:
+        """Delete a SCIM group from the target system."""
+
+        await self._execute(self.client.delete_group, group_id)
+        return f"Group {group_id} deleted."
 
 
 class SCIMInboundRequest(BaseModel):
@@ -174,13 +231,120 @@ class SCIMInboundServer:
 
             return {"status": "updated"}
 
+        @self.app.get("/scim/v2/Groups")
+        async def list_groups(credentials: HTTPAuthorizationCredentials = Depends(security)):
+            self._verify_bearer(credentials)
+            provider = await self._get_provider()
+
+            groups: List[Dict[str, Any]] = []
+            list_method = getattr(provider, "list_entra_groups", None)
+            if callable(list_method):
+                try:
+                    entra_groups = await list_method(settings.SCIM_GROUP_PREFIX or None)
+                    for group in entra_groups:
+                        display_name = group.get("displayName") or group.get("display_name")
+                        groups.append({"id": group.get("id"), "displayName": display_name})
+                except Exception as exc:  # pragma: no cover - provider failures
+                    logger.error("Failed to list provider groups: %s", exc, exc_info=True)
+
+            if not groups:
+                fallback_name = f"{settings.SCIM_GROUP_PREFIX or ''}Sample-Group"
+                groups = [{"id": "sample-group", "displayName": fallback_name}]
+
+            return {
+                "Resources": groups,
+                "totalResults": len(groups),
+                "itemsPerPage": len(groups),
+                "startIndex": 1,
+            }
+
         @self.app.post("/scim/v2/Groups")
         async def create_group(
             group: SCIMGroup, credentials: HTTPAuthorizationCredentials = Depends(security)
         ):
             self._verify_bearer(credentials)
-            # Extend with identity provider integration as needed.
-            return {"id": getattr(group, "id", None) or getattr(group, "displayName", "group")}
+
+            provider = await self._get_provider()
+            display_name = getattr(group, "display_name", None) or getattr(group, "displayName", None)
+            if not display_name:
+                raise HTTPException(status_code=400, detail="displayName is required")
+
+            create_method = getattr(provider, "create_entra_group", None)
+            if callable(create_method):
+                entra_group = await create_method(display_name)
+                entra_dict = getattr(entra_group, "model_dump", None)
+                if callable(entra_dict):
+                    entra_group = entra_dict()
+                if isinstance(entra_group, dict):
+                    group_id = entra_group.get("id") or entra_group.get("group_id")
+                else:
+                    group_id = getattr(entra_group, "id", display_name)
+                return {"id": group_id, "displayName": display_name}
+
+            return {"id": display_name, "displayName": display_name}
+
+        @self.app.patch("/scim/v2/Groups/{group_id}")
+        async def patch_group(
+            group_id: str,
+            request: SCIMInboundRequest,
+            credentials: HTTPAuthorizationCredentials = Depends(security),
+        ):
+            self._verify_bearer(credentials)
+            provider = await self._get_provider()
+
+            add_method = getattr(provider, "add_users_to_group", None)
+            remove_method = getattr(provider, "remove_users_from_group", None)
+
+            for operation in request.operations or []:
+                op = (operation.get("op") or "").lower()
+                if op == "add":
+                    value = operation.get("value", [])
+                    if isinstance(value, dict):
+                        value = [value]
+                    members = [item.get("value") for item in value if item.get("value")]
+                    if members:
+                        if callable(add_method):
+                            await add_method(group_id, members)
+                        else:
+                            for member in members:
+                                await provider.provision_access(member, group_id, "member")
+                elif op == "remove":
+                    member = self._extract_member_from_path(operation.get("path"))
+                    if not member:
+                        raw_value = operation.get("value") or []
+                        if isinstance(raw_value, dict):
+                            raw_value = [raw_value]
+                        if isinstance(raw_value, list) and raw_value:
+                            member = raw_value[0].get("value")
+                    if member:
+                        if callable(remove_method):
+                            await remove_method(group_id, [member])
+                        else:
+                            await provider.revoke_access(member, group_id)
+
+            return {"status": "updated"}
+
+        @self.app.delete("/scim/v2/Groups/{group_id}")
+        async def delete_group(
+            group_id: str, credentials: HTTPAuthorizationCredentials = Depends(security)
+        ):
+            self._verify_bearer(credentials)
+            provider = await self._get_provider()
+
+            delete_method = getattr(provider, "delete_entra_group", None)
+            if callable(delete_method):
+                await delete_method(group_id)
+
+            return {"status": "deleted"}
+
+    @staticmethod
+    def _extract_member_from_path(path: Optional[str]) -> Optional[str]:
+        if not path:
+            return None
+        match = re.search(r'members\[value eq "([^"]+)"\]', path)
+        if match:
+            return match.group(1)
+        return None
 
     def run(self) -> None:
         import uvicorn
