@@ -1,4 +1,4 @@
-"""Run the auto-block workflow with mock providers."""
+"""Run the auto-block workflow with mock providers and show the CA block response."""
 
 import asyncio
 from pprint import pprint

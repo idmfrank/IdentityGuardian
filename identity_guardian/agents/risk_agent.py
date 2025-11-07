@@ -281,18 +281,47 @@ Provide clear risk assessments with actionable remediation steps."""
             block_reason = (
                 f"Auto-block: Risk {total_risk} (Entra: {entra_score}, Sentinel: {sentinel_score})"
             )
-            disable_result = await self.identity_provider.disable_user(user_id, block_reason)
-            result["action"] = "blocked"
-            result["block_result"] = disable_result
+            block_method = getattr(self.identity_provider, "block_via_ca", None)
+            action = "blocked"
+            block_result: Any
+            if callable(block_method):
+                try:
+                    block_result = await block_method(user_id, block_reason)
+                except Exception as exc:  # pragma: no cover - handled with fallback
+                    self._logger.error(
+                        "Conditional Access block failed for %s: %s", user_id, exc, exc_info=True
+                    )
+                    block_result = f"Error: {exc}"
 
+                if isinstance(block_result, str) and block_result.lower().startswith("error"):
+                    fallback_result = await self.identity_provider.disable_user(user_id, block_reason)
+                    result["fallback_block_result"] = fallback_result
+                else:
+                    action = "ca_blocked"
+            else:
+                block_result = await self.identity_provider.disable_user(user_id, block_reason)
+
+            result["action"] = action
+            result["block_result"] = block_result
+
+            bot = TeamsApprovalBot()
             try:
-                bot = TeamsApprovalBot()
                 await bot.send_alert(user_id, block_reason, total_risk)
                 result["alert"] = "sent"
             except Exception as exc:  # pragma: no cover - alert failures shouldn't block flow
                 self._logger.warning("Failed to send Teams alert for %s: %s", user_id, exc)
                 result["alert"] = "failed"
                 result["alert_error"] = str(exc)
+
+            try:
+                await bot.send_investigation_card(user_id, block_reason, total_risk)
+                result["investigation"] = "sent"
+            except Exception as exc:  # pragma: no cover - investigation card failures shouldn't block
+                self._logger.warning(
+                    "Failed to send investigation card for %s: %s", user_id, exc
+                )
+                result["investigation"] = "failed"
+                result["investigation_error"] = str(exc)
         else:
             result["action"] = "monitored"
 

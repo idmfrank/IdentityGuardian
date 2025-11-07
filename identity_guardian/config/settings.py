@@ -30,6 +30,16 @@ class Settings(BaseSettings):
         description="Teams channel ID for high-risk auto-block alerts",
     )
 
+    CA_BLOCK_POLICY_ID: str = Field(
+        default="",
+        description="Template Conditional Access policy ID used for user-specific blocks",
+    )
+
+    INVESTIGATION_CHANNEL_ID: str = Field(
+        default="",
+        description="Teams channel ID for investigation workflow cards",
+    )
+
     AUTO_BLOCK_THRESHOLD: int = Field(
         default=90,
         description="Total risk score threshold to auto-disable high-risk identities",
