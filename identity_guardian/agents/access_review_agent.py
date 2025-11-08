@@ -20,6 +20,7 @@ class AccessReviewAgent:
         self.identity_provider = identity_provider
         self.grc_provider = grc_provider
         self.campaigns = {}
+        self.model_client = model_client
         
         system_message = """You are an Access Review Agent specialized in identity governance.
 
@@ -160,7 +161,7 @@ Violations: {', '.join([v['violation'] for v in compliance_check.get('violations
 
 Provide a one-word recommendation: APPROVE, REVOKE, or MODIFY."""
 
-        result = await self.agent.model_client.create([TextMessage(content=prompt, source="user")])
+        result = await self.model_client.create([TextMessage(content=prompt, source="user")])
         content = result.content if hasattr(result, 'content') else str(result)
         
         if "REVOKE" in content.upper():

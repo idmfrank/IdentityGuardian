@@ -28,6 +28,7 @@ class AccessRequestAgent:
         self.itsm_provider = itsm_provider
         self.grc_provider = grc_provider
         self.identity_provider = identity_provider
+        self.model_client = model_client
         self.pending_requests = {}
         
         system_message = """You are an Access Request Agent specialized in identity security.
@@ -242,7 +243,7 @@ Compliant: {compliance_check.get('compliant', True)}
 
 Provide a brief recommendation (approve/reject/conditional) with reasoning."""
 
-        result = await self.agent.model_client.create([TextMessage(content=prompt, source="user")])
+        result = await self.model_client.create([TextMessage(content=prompt, source="user")])
         return result.content if hasattr(result, 'content') else str(result)
     
     async def approve_request(self, request_id: str, approver_id: str) -> Dict[str, Any]:
