@@ -5,7 +5,13 @@ from copy import deepcopy
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Union
 
-from msgraph.core import APIVersion
+try:  # pragma: no cover - optional dependency shim
+    from msgraph.core import APIVersion
+except ImportError:  # pragma: no cover - lightweight fallback for local dev
+    class _APIVersion:
+        BETA = "beta"
+
+    APIVersion = _APIVersion()
 
 from ..config.settings import (
     PRIVILEGED_RESOURCE_ROLE_MAP,
